@@ -6,10 +6,7 @@ from pypresence import Presence
 import threading
 from werkzeug.utils import secure_filename
 import mimetypes
-from flask_cors import CORS
 
-app = Flask(__name__)
-CORS(app)  # Diese Zeile hinzufügen!
 # Neue Imports für Metadaten-Erkennung
 try:
     from mutagen import File as MutagenFile
@@ -23,7 +20,11 @@ except ImportError:
     print("⚠️ mutagen nicht installiert. Metadaten-Erkennung deaktiviert.")
     print("   Installiere mit: pip install mutagen")
 
+from flask_cors import CORS
+
 app = Flask(__name__)
+CORS(app)  # Diese Zeile DIREKT nach app = Flask(__name__)
+
 
 # Config
 UPLOAD_FOLDER = 'music_library'
