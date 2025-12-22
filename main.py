@@ -969,6 +969,253 @@ HTML_TEMPLATE = """
         ::-webkit-scrollbar-thumb:hover {
             background: #535353;
         }
+
+        /* ============================================ */
+        /* MOBILE RESPONSIVE STYLES */
+        /* ============================================ */
+        @media (max-width: 768px) {
+            .app-container {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+                padding: 16px;
+                border-right: none;
+                border-bottom: 1px solid #1a1a1a;
+                flex-direction: row;
+                justify-content: space-between;
+                align-items: center;
+                height: auto;
+                gap: 12px;
+            }
+
+            .logo {
+                font-size: 20px;
+                margin-bottom: 0;
+            }
+
+            .sidebar > div:last-child {
+                display: flex;
+                gap: 8px;
+            }
+
+            .nav-item {
+                padding: 8px 12px;
+                font-size: 13px;
+                gap: 8px;
+            }
+
+            .main-content {
+                padding: 16px;
+                padding-bottom: 200px;
+            }
+
+            .header {
+                flex-direction: column;
+                gap: 16px;
+                align-items: flex-start;
+            }
+
+            .greeting {
+                font-size: 24px;
+            }
+
+            .upload-btn {
+                width: 100%;
+                padding: 14px 24px;
+            }
+
+            .songs-grid {
+                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+                gap: 16px;
+            }
+
+            .song-card {
+                padding: 12px;
+            }
+
+            .song-card-title {
+                font-size: 14px;
+            }
+
+            .song-card-artist {
+                font-size: 12px;
+            }
+
+            .play-overlay {
+                width: 48px;
+                height: 48px;
+                font-size: 20px;
+                top: 12px;
+                right: 12px;
+            }
+
+            .song-options {
+                opacity: 1;
+                top: 8px;
+                left: 8px;
+            }
+
+            .option-btn {
+                width: 32px;
+                height: 32px;
+                font-size: 14px;
+            }
+
+            .player-bar {
+                height: auto;
+                flex-direction: column;
+                padding: 12px;
+                gap: 12px;
+                align-items: stretch;
+            }
+
+            .player-track-info {
+                width: 100%;
+                justify-content: flex-start;
+            }
+
+            .player-track-info img {
+                width: 48px;
+                height: 48px;
+            }
+
+            .player-track-details h4 {
+                font-size: 13px;
+            }
+
+            .player-track-details p {
+                font-size: 11px;
+            }
+
+            .player-controls {
+                width: 100%;
+            }
+
+            .progress-section {
+                max-width: 100%;
+            }
+
+            .player-volume {
+                width: 100%;
+            }
+
+            .player-eq {
+                position: absolute;
+                top: 12px;
+                right: 12px;
+            }
+
+            .discord-indicator {
+                top: auto;
+                bottom: 220px;
+                right: 12px;
+                font-size: 10px;
+                padding: 6px 12px;
+            }
+
+            .discord-dot {
+                width: 6px;
+                height: 6px;
+            }
+
+            .modal-content {
+                width: 95%;
+                padding: 24px;
+                margin: 16px;
+            }
+
+            .modal-header {
+                font-size: 20px;
+            }
+
+            .upload-area {
+                padding: 32px 16px;
+            }
+
+            .upload-icon {
+                font-size: 48px;
+            }
+
+            .eq-modal {
+                width: 95%;
+                max-height: 90vh;
+                overflow-y: auto;
+            }
+
+            .eq-presets {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .eq-sliders {
+                flex-wrap: wrap;
+                gap: 8px;
+                padding: 16px;
+                min-height: auto;
+            }
+
+            .eq-slider {
+                height: 120px;
+            }
+
+            .eq-slider-group {
+                gap: 8px;
+            }
+
+            .control-buttons {
+                gap: 12px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .songs-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 12px;
+            }
+
+            .greeting {
+                font-size: 20px;
+            }
+
+            .section-title {
+                font-size: 20px;
+            }
+
+            .eq-presets {
+                grid-template-columns: 1fr;
+            }
+
+            .control-btn {
+                font-size: 18px;
+            }
+
+            .play-pause-btn {
+                width: 36px;
+                height: 36px;
+                font-size: 18px;
+            }
+
+            .modal-buttons {
+                flex-direction: column;
+            }
+
+            .modal-btn {
+                width: 100%;
+            }
+        }
+
+        /* Landscape Tablets */
+        @media (min-width: 769px) and (max-width: 1024px) {
+            .sidebar {
+                width: 220px;
+                padding: 20px;
+            }
+
+            .songs-grid {
+                grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            }
+        }
     </style>
 </head>
 <body>
@@ -1210,10 +1457,15 @@ HTML_TEMPLATE = """
         // Volume Slider with Drag Support
         let isDraggingVolume = false;
         
+        // Volume & Progress Touch Support
+        let isDraggingVolume = false;
+        let isDraggingProgress = false;
+        
         function updateVolume(e) {
             const slider = document.getElementById('volumeSlider');
             const rect = slider.getBoundingClientRect();
-            const clickX = e.clientX - rect.left;
+            const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+            const clickX = clientX - rect.left;
             const width = rect.width;
             const percentage = Math.max(0, Math.min(1, clickX / width));
             
@@ -1221,9 +1473,27 @@ HTML_TEMPLATE = """
             document.getElementById('volumeLevel').style.width = (percentage * 100) + '%';
         }
         
+        function updateProgress(e) {
+            if (currentTrackIndex === -1 || !audioPlayer.duration) return;
+            const bar = document.getElementById('progressContainer');
+            const rect = bar.getBoundingClientRect();
+            const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+            const clickX = clientX - rect.left;
+            const width = rect.width;
+            const percentage = clickX / width;
+            audioPlayer.currentTime = audioPlayer.duration * percentage;
+        }
+        
+        // Volume Slider Events
         document.getElementById('volumeSlider').addEventListener('mousedown', (e) => {
             isDraggingVolume = true;
             updateVolume(e);
+        });
+        
+        document.getElementById('volumeSlider').addEventListener('touchstart', (e) => {
+            isDraggingVolume = true;
+            updateVolume(e);
+            e.preventDefault();
         });
         
         document.addEventListener('mousemove', (e) => {
@@ -1232,7 +1502,17 @@ HTML_TEMPLATE = """
             }
         });
         
+        document.addEventListener('touchmove', (e) => {
+            if (isDraggingVolume) {
+                updateVolume(e);
+            }
+        }, { passive: false });
+        
         document.addEventListener('mouseup', () => {
+            isDraggingVolume = false;
+        });
+        
+        document.addEventListener('touchend', () => {
             isDraggingVolume = false;
         });
 
@@ -1647,25 +1927,37 @@ HTML_TEMPLATE = """
             });
         }
 
-        document.getElementById('progressContainer').addEventListener('click', (e) => {
-            if (currentTrackIndex === -1 || !audioPlayer.duration) return;
-            const bar = e.currentTarget;
-            const rect = bar.getBoundingClientRect();
-            const clickX = e.clientX - rect.left;
-            const width = rect.width;
-            const percentage = clickX / width;
-            audioPlayer.currentTime = audioPlayer.duration * percentage;
+        // Progress Bar Events (Click & Touch & Drag)
+        document.getElementById('progressContainer').addEventListener('click', updateProgress);
+        
+        document.getElementById('progressContainer').addEventListener('touchstart', (e) => {
+            updateProgress(e);
+            e.preventDefault();
         });
 
-        document.getElementById('volumeSlider').addEventListener('click', (e) => {
-            const slider = e.currentTarget;
-            const rect = slider.getBoundingClientRect();
-            const clickX = e.clientX - rect.left;
-            const width = rect.width;
-            const percentage = clickX / width;
-            
-            audioPlayer.volume = percentage;
-            document.getElementById('volumeLevel').style.width = (percentage * 100) + '%';
+        document.getElementById('progressContainer').addEventListener('mousedown', (e) => {
+            isDraggingProgress = true;
+            updateProgress(e);
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (isDraggingProgress) {
+                updateProgress(e);
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            isDraggingProgress = false;
+        });
+
+        document.addEventListener('touchmove', (e) => {
+            if (isDraggingProgress) {
+                updateProgress(e);
+            }
+        }, { passive: false });
+
+        document.addEventListener('touchend', () => {
+            isDraggingProgress = false;
         });
 
         let lastUpdateTime = 0;
