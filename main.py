@@ -226,14 +226,13 @@ HTML_TEMPLATE = """
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Planetify - Deine Musik</title>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            -webkit-tap-highlight-color: transparent;
         }
 
         body {
@@ -257,7 +256,6 @@ HTML_TEMPLATE = """
             flex-direction: column;
             gap: 24px;
             border-right: 1px solid #1a1a1a;
-            flex-shrink: 0;
         }
 
         .logo {
@@ -269,7 +267,6 @@ HTML_TEMPLATE = """
             background: linear-gradient(135deg, #ff6b00 0%, #ff3d00 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            background-clip: text;
             margin-bottom: 16px;
         }
 
@@ -286,6 +283,11 @@ HTML_TEMPLATE = """
             color: #b3b3b3;
         }
 
+        .nav-item:hover {
+            color: #fff;
+            background: #1a1a1a;
+        }
+
         .nav-item.active {
             color: #fff;
             background: linear-gradient(135deg, rgba(255, 107, 0, 0.2), rgba(255, 61, 0, 0.1));
@@ -297,7 +299,6 @@ HTML_TEMPLATE = """
             overflow-y: auto;
             padding: 24px;
             padding-bottom: 120px;
-            -webkit-overflow-scrolling: touch;
         }
 
         .header {
@@ -326,7 +327,11 @@ HTML_TEMPLATE = """
             cursor: pointer;
             transition: all 0.3s;
             box-shadow: 0 4px 20px rgba(255, 107, 0, 0.3);
-            white-space: nowrap;
+        }
+
+        .upload-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(255, 107, 0, 0.5);
         }
 
         .section-title {
@@ -351,8 +356,15 @@ HTML_TEMPLATE = """
             border: 1px solid transparent;
         }
 
-        .song-card:active {
-            transform: scale(0.95);
+        .song-card:hover {
+            background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
+            transform: translateY(-8px);
+            border-color: #ff6b00;
+            box-shadow: 0 12px 40px rgba(255, 107, 0, 0.2);
+        }
+
+        .song-card:hover .song-options {
+            opacity: 1;
         }
 
         .song-card img {
@@ -399,7 +411,43 @@ HTML_TEMPLATE = """
             transition: all 0.3s;
             box-shadow: 0 8px 24px rgba(255, 107, 0, 0.5);
             font-size: 24px;
-            pointer-events: none;
+        }
+
+        .song-card:hover .play-overlay {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .song-options {
+            position: absolute;
+            top: 14px;
+            left: 14px;
+            opacity: 0;
+            transition: all 0.3s;
+            display: flex;
+            gap: 6px;
+            z-index: 10;
+        }
+
+        .option-btn {
+            width: 36px;
+            height: 36px;
+            background: rgba(0,0,0,0.9);
+            border: 1px solid #333;
+            border-radius: 50%;
+            color: #fff;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            backdrop-filter: blur(10px);
+        }
+
+        .option-btn:hover {
+            background: linear-gradient(135deg, #ff6b00, #ff3d00);
+            border-color: #ff6b00;
+            transform: scale(1.1);
         }
 
         .player-bar {
@@ -423,7 +471,6 @@ HTML_TEMPLATE = """
             align-items: center;
             gap: 12px;
             width: 280px;
-            flex-shrink: 0;
         }
 
         .player-track-info img {
@@ -471,6 +518,11 @@ HTML_TEMPLATE = """
             padding: 8px;
         }
 
+        .control-btn:hover {
+            color: #fff;
+            transform: scale(1.15);
+        }
+
         .play-pause-btn {
             width: 40px;
             height: 40px;
@@ -481,6 +533,11 @@ HTML_TEMPLATE = """
             justify-content: center;
             color: #000;
             font-size: 20px;
+        }
+
+        .play-pause-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 16px rgba(255,255,255,0.3);
         }
 
         .progress-section {
@@ -499,20 +556,23 @@ HTML_TEMPLATE = """
 
         .progress-bar-container {
             flex: 1;
-            height: 8px;
+            height: 4px;
             background: #4d4d4d;
-            border-radius: 4px;
+            border-radius: 2px;
             cursor: pointer;
             position: relative;
-            touch-action: none;
+        }
+
+        .progress-bar-container:hover .progress-bar {
+            background: linear-gradient(90deg, #ff6b00, #ff3d00);
         }
 
         .progress-bar {
             height: 100%;
             background: #fff;
-            border-radius: 4px;
-            width: 30%;
-            pointer-events: none;
+            border-radius: 2px;
+            width: 0%;
+            transition: background 0.2s;
         }
 
         .player-volume {
@@ -520,25 +580,336 @@ HTML_TEMPLATE = """
             display: flex;
             align-items: center;
             gap: 12px;
-            flex-shrink: 0;
+        }
+
+        .player-eq {
+            display: flex;
+            align-items: center;
+        }
+
+        .eq-btn {
+            background: transparent;
+            border: 1px solid #333;
+            color: #b3b3b3;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 18px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .eq-btn:hover {
+            border-color: #ff6b00;
+            color: #ff6b00;
+            transform: scale(1.1);
+        }
+
+        .eq-modal {
+            width: 700px;
+            max-width: 95%;
+        }
+
+        .eq-presets {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 8px;
+            margin-bottom: 32px;
+        }
+
+        .preset-btn {
+            background: #0a0a0a;
+            border: 1px solid #333;
+            color: #b3b3b3;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .preset-btn:hover {
+            border-color: #ff6b00;
+            color: #fff;
+        }
+
+        .preset-btn.active {
+            background: linear-gradient(135deg, #ff6b00, #ff3d00);
+            border-color: #ff6b00;
+            color: #fff;
+        }
+
+        .eq-sliders {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 32px;
+            padding: 20px;
+            background: #0a0a0a;
+            border-radius: 12px;
+            min-height: 280px;
+        }
+
+        .eq-slider-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .eq-slider-container {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .eq-slider {
+            -webkit-appearance: slider-vertical;
+            writing-mode: bt-lr;
+            height: 180px;
+            width: 4px;
+            background: #333;
+            border-radius: 2px;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .eq-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #ff6b00, #ff3d00);
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(255, 107, 0, 0.4);
+        }
+
+        .eq-slider::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #ff6b00, #ff3d00);
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 2px 8px rgba(255, 107, 0, 0.4);
+        }
+
+        .eq-value {
+            font-size: 11px;
+            color: #ff6b00;
+            font-weight: 600;
+            min-width: 40px;
+            text-align: center;
+        }
+
+        .eq-slider-group label {
+            font-size: 11px;
+            color: #b3b3b3;
+            font-weight: 500;
         }
 
         .volume-slider {
             flex: 1;
-            height: 8px;
+            height: 4px;
             background: #4d4d4d;
-            border-radius: 4px;
+            border-radius: 2px;
             position: relative;
             cursor: pointer;
-            touch-action: none;
         }
 
         .volume-level {
             height: 100%;
             background: #fff;
-            border-radius: 4px;
+            border-radius: 2px;
             width: 70%;
-            pointer-events: none;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(10px);
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);
+            border-radius: 16px;
+            padding: 32px;
+            width: 500px;
+            max-width: 90%;
+            border: 1px solid #333;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+        }
+
+        .modal-header {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 24px;
+            background: linear-gradient(135deg, #ff6b00, #ff3d00);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #b3b3b3;
+        }
+
+        .form-group input {
+            width: 100%;
+            background: #0a0a0a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 12px;
+            color: #fff;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #ff6b00;
+            box-shadow: 0 0 0 3px rgba(255, 107, 0, 0.1);
+        }
+
+        .upload-area {
+            border: 2px dashed #535353;
+            border-radius: 12px;
+            padding: 48px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 20px;
+            background: #0a0a0a;
+        }
+
+        .upload-area:hover {
+            border-color: #ff6b00;
+            background: rgba(255, 107, 0, 0.05);
+        }
+
+        .upload-area.drag-over {
+            border-color: #ff6b00;
+            background: rgba(255, 107, 0, 0.1);
+        }
+
+        .upload-area input {
+            display: none;
+        }
+
+        .upload-icon {
+            font-size: 56px;
+            margin-bottom: 16px;
+        }
+
+        .upload-info {
+            font-size: 12px;
+            color: #b3b3b3;
+            margin-top: 8px;
+        }
+
+        .file-list {
+            max-height: 200px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: #0a0a0a;
+            border-radius: 6px;
+            margin-bottom: 6px;
+            font-size: 13px;
+        }
+
+        .file-item-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-item-remove {
+            background: transparent;
+            border: none;
+            color: #e22134;
+            cursor: pointer;
+            padding: 4px 8px;
+            font-size: 16px;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+
+        .modal-btn {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 24px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .modal-btn-cancel {
+            background: transparent;
+            color: #fff;
+            border: 1px solid #535353;
+        }
+
+        .modal-btn-cancel:hover {
+            border-color: #fff;
+        }
+
+        .modal-btn-submit {
+            background: linear-gradient(135deg, #ff6b00, #ff3d00);
+            color: #fff;
+            box-shadow: 0 4px 16px rgba(255, 107, 0, 0.3);
+        }
+
+        .modal-btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 24px rgba(255, 107, 0, 0.5);
+        }
+
+        .modal-btn-delete {
+            background: #e22134;
+            color: #fff;
+        }
+
+        .modal-btn-delete:hover {
+            background: #ff3d3d;
         }
 
         .discord-indicator {
@@ -574,7 +945,6 @@ HTML_TEMPLATE = """
             text-align: center;
             padding: 80px 20px;
             color: #b3b3b3;
-            grid-column: 1 / -1;
         }
 
         .empty-state-icon {
@@ -583,180 +953,46 @@ HTML_TEMPLATE = """
             opacity: 0.5;
         }
 
-        /* MOBILE RESPONSIVE */
-        @media (max-width: 768px) {
-            .app-container {
-                flex-direction: column;
-            }
-
-            .sidebar {
-                width: 100%;
-                padding: 12px 16px;
-                border-right: none;
-                border-bottom: 1px solid #1a1a1a;
-                flex-direction: row;
-                justify-content: space-between;
-                align-items: center;
-                height: auto;
-                gap: 12px;
-            }
-
-            .logo {
-                font-size: 20px;
-                margin-bottom: 0;
-            }
-
-            .sidebar > div:last-child {
-                display: flex;
-                gap: 8px;
-            }
-
-            .nav-item {
-                padding: 8px;
-                font-size: 18px;
-                gap: 0;
-                min-width: 40px;
-                min-height: 40px;
-                justify-content: center;
-            }
-
-            .main-content {
-                padding: 16px;
-                padding-bottom: 220px;
-            }
-
-            .header {
-                flex-direction: column;
-                gap: 16px;
-                align-items: stretch;
-            }
-
-            .greeting {
-                font-size: 24px;
-            }
-
-            .upload-btn {
-                width: 100%;
-                padding: 14px;
-            }
-
-            .songs-grid {
-                grid-template-columns: repeat(2, 1fr);
-                gap: 12px;
-            }
-
-            .song-card {
-                padding: 12px;
-            }
-
-            .song-card-title {
-                font-size: 13px;
-            }
-
-            .song-card-artist {
-                font-size: 11px;
-            }
-
-            .play-overlay {
-                opacity: 1;
-                width: 44px;
-                height: 44px;
-                font-size: 18px;
-                top: 12px;
-                right: 12px;
-                transform: translateY(0);
-            }
-
-            .player-bar {
-                height: auto;
-                flex-wrap: wrap;
-                padding: 12px;
-                gap: 12px;
-            }
-
-            .player-track-info {
-                width: 100%;
-                order: 1;
-            }
-
-            .player-controls {
-                width: 100%;
-                order: 2;
-            }
-
-            .player-volume {
-                width: 100%;
-                order: 3;
-            }
-
-            .discord-indicator {
-                bottom: 200px;
-                top: auto;
-                font-size: 10px;
-                padding: 6px 12px;
-            }
-
-            .progress-bar-container {
-                height: 12px;
-            }
-
-            .volume-slider {
-                height: 12px;
-            }
+        ::-webkit-scrollbar {
+            width: 12px;
         }
 
-        @media (max-width: 480px) {
-            .greeting {
-                font-size: 20px;
-            }
-
-            .section-title {
-                font-size: 18px;
-            }
+        ::-webkit-scrollbar-track {
+            background: transparent;
         }
 
-        @media (hover: hover) {
-            .song-card:hover {
-                background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
-                transform: translateY(-8px);
-                border-color: #ff6b00;
-                box-shadow: 0 12px 40px rgba(255, 107, 0, 0.2);
-            }
+        ::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 6px;
+        }
 
-            .song-card:hover .play-overlay {
-                opacity: 1;
-                transform: translateY(0);
-            }
-
-            .upload-btn:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 8px 30px rgba(255, 107, 0, 0.5);
-            }
-
-            .nav-item:hover {
-                color: #fff;
-                background: #1a1a1a;
-            }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #535353;
         }
     </style>
 </head>
 <body>
+    <audio id="audioPlayer" preload="metadata"></audio>
+
     <div class="app-container">
         <div class="sidebar">
             <div class="logo">
                 <span>🌍</span>
-                <span>PLANETIFY</span>
+                PLANETIFY
             </div>
             
             <div>
                 <div class="nav-item active">
                     <span>🏠</span>
+                    Start
                 </div>
                 <div class="nav-item">
                     <span>📚</span>
+                    Deine Mediathek
                 </div>
                 <div class="nav-item">
                     <span>🔍</span>
+                    Suchen
                 </div>
             </div>
         </div>
@@ -769,40 +1005,17 @@ HTML_TEMPLATE = """
 
             <div class="header">
                 <div class="greeting">Hey, willkommen zurück!</div>
-                <button class="upload-btn" onclick="alert('Upload-Funktion (nur im Backend)')">
+                <button class="upload-btn" onclick="openUploadModal()">
                     📁 Songs hochladen
                 </button>
             </div>
 
             <div class="section-title">Deine Musik</div>
             <div class="songs-grid" id="songsGrid">
-                <!-- Demo Songs -->
-                <div class="song-card">
-                    <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g1' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%23ff6b00'/%3E%3Cstop offset='100%25' stop-color='%23ff3d00'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23g1)' width='100' height='100'/%3E%3Ctext x='50' y='50' text-anchor='middle' dy='.3em' fill='white' font-size='40'%3E🎵%3C/text%3E%3C/svg%3E" alt="Song 1">
-                    <div class="play-overlay">▶️</div>
-                    <div class="song-card-title">Demo Song 1</div>
-                    <div class="song-card-artist">Demo Artist</div>
-                </div>
-
-                <div class="song-card">
-                    <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g2' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%2300d4ff'/%3E%3Cstop offset='100%25' stop-color='%230066ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23g2)' width='100' height='100'/%3E%3Ctext x='50' y='50' text-anchor='middle' dy='.3em' fill='white' font-size='40'%3E🎸%3C/text%3E%3C/svg%3E" alt="Song 2">
-                    <div class="play-overlay">▶️</div>
-                    <div class="song-card-title">Demo Song 2</div>
-                    <div class="song-card-artist">Demo Artist 2</div>
-                </div>
-
-                <div class="song-card">
-                    <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g3' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%23ff00ff'/%3E%3Cstop offset='100%25' stop-color='%23ff0066'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23g3)' width='100' height='100'/%3E%3Ctext x='50' y='50' text-anchor='middle' dy='.3em' fill='white' font-size='40'%3E🎹%3C/text%3E%3C/svg%3E" alt="Song 3">
-                    <div class="play-overlay">▶️</div>
-                    <div class="song-card-title">Demo Song 3</div>
-                    <div class="song-card-artist">Demo Artist 3</div>
-                </div>
-
-                <div class="song-card">
-                    <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g4' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%2300ff88'/%3E%3Cstop offset='100%25' stop-color='%2300cc66'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23g4)' width='100' height='100'/%3E%3Ctext x='50' y='50' text-anchor='middle' dy='.3em' fill='white' font-size='40'%3E🎤%3C/text%3E%3C/svg%3E" alt="Song 4">
-                    <div class="play-overlay">▶️</div>
-                    <div class="song-card-title">Demo Song 4</div>
-                    <div class="song-card-artist">Demo Artist 4</div>
+                <div class="empty-state">
+                    <div class="empty-state-icon">🎵</div>
+                    <h3>Noch keine Songs</h3>
+                    <p>Lade deine ersten MP3s hoch!</p>
                 </div>
             </div>
         </div>
@@ -810,32 +1023,179 @@ HTML_TEMPLATE = """
 
     <div class="player-bar">
         <div class="player-track-info">
-            <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect fill='%23ff6b00' width='100' height='100'/%3E%3C/svg%3E" alt="Cover">
+            <img id="playerCover" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect fill='%23ff6b00' width='100' height='100'/%3E%3C/svg%3E" alt="Cover">
             <div class="player-track-details">
-                <h4>Wähle einen Song</h4>
-                <p>Artist</p>
+                <h4 id="playerTitle">Wähle einen Song</h4>
+                <p id="playerArtist">Artist</p>
             </div>
         </div>
 
         <div class="player-controls">
             <div class="control-buttons">
-                <button class="control-btn">⏮️</button>
-                <button class="control-btn play-pause-btn">▶️</button>
-                <button class="control-btn">⏭️</button>
+                <button class="control-btn" onclick="previousTrack()">⏮️</button>
+                <button class="control-btn play-pause-btn" id="playPauseBtn" onclick="togglePlay()">▶️</button>
+                <button class="control-btn" onclick="nextTrack()">⏭️</button>
             </div>
             <div class="progress-section">
-                <span class="time-label">0:00</span>
-                <div class="progress-bar-container" id="progressBar">
-                    <div class="progress-bar"></div>
+                <span class="time-label" id="currentTime">0:00</span>
+                <div class="progress-bar-container" id="progressContainer">
+                    <div class="progress-bar" id="progressBar"></div>
                 </div>
-                <span class="time-label">3:45</span>
+                <span class="time-label" id="duration">0:00</span>
             </div>
         </div>
 
         <div class="player-volume">
             <span>🔊</span>
             <div class="volume-slider" id="volumeSlider">
-                <div class="volume-level"></div>
+                <div class="volume-level" id="volumeLevel"></div>
+            </div>
+        </div>
+
+        <div class="player-eq">
+            <button class="eq-btn" onclick="toggleEqualizer()" title="Equalizer">
+                🎚️
+            </button>
+        </div>
+    </div>
+
+    <!-- Equalizer Modal -->
+    <div class="modal" id="eqModal">
+        <div class="modal-content eq-modal">
+            <div class="modal-header">Equalizer</div>
+            
+            <div class="eq-presets">
+                <button class="preset-btn active" onclick="applyPreset('flat')">Natürlich</button>
+                <button class="preset-btn" onclick="applyPreset('bass')">Bass-Booster</button>
+                <button class="preset-btn" onclick="applyPreset('treble')">Höhen-Booster</button>
+                <button class="preset-btn" onclick="applyPreset('vocal')">Gesprochenes Wort</button>
+                <button class="preset-btn" onclick="applyPreset('rock')">Rock</button>
+                <button class="preset-btn" onclick="applyPreset('pop')">Pop</button>
+                <button class="preset-btn" onclick="applyPreset('jazz')">Jazz</button>
+                <button class="preset-btn" onclick="applyPreset('classical')">Klassik</button>
+                <button class="preset-btn" onclick="applyPreset('electronic')">Electronic</button>
+                <button class="preset-btn" onclick="applyPreset('hiphop')">Hip-Hop</button>
+            </div>
+
+            <div class="eq-sliders">
+                <div class="eq-slider-group">
+                    <div class="eq-slider-container">
+                        <input type="range" class="eq-slider" id="eq60" min="-12" max="12" value="0" step="1" orient="vertical">
+                        <div class="eq-value" id="val60">0dB</div>
+                    </div>
+                    <label>60Hz</label>
+                </div>
+                <div class="eq-slider-group">
+                    <div class="eq-slider-container">
+                        <input type="range" class="eq-slider" id="eq170" min="-12" max="12" value="0" step="1" orient="vertical">
+                        <div class="eq-value" id="val170">0dB</div>
+                    </div>
+                    <label>170Hz</label>
+                </div>
+                <div class="eq-slider-group">
+                    <div class="eq-slider-container">
+                        <input type="range" class="eq-slider" id="eq310" min="-12" max="12" value="0" step="1" orient="vertical">
+                        <div class="eq-value" id="val310">0dB</div>
+                    </div>
+                    <label>310Hz</label>
+                </div>
+                <div class="eq-slider-group">
+                    <div class="eq-slider-container">
+                        <input type="range" class="eq-slider" id="eq600" min="-12" max="12" value="0" step="1" orient="vertical">
+                        <div class="eq-value" id="val600">0dB</div>
+                    </div>
+                    <label>600Hz</label>
+                </div>
+                <div class="eq-slider-group">
+                    <div class="eq-slider-container">
+                        <input type="range" class="eq-slider" id="eq1000" min="-12" max="12" value="0" step="1" orient="vertical">
+                        <div class="eq-value" id="val1000">0dB</div>
+                    </div>
+                    <label>1kHz</label>
+                </div>
+                <div class="eq-slider-group">
+                    <div class="eq-slider-container">
+                        <input type="range" class="eq-slider" id="eq3000" min="-12" max="12" value="0" step="1" orient="vertical">
+                        <div class="eq-value" id="val3000">0dB</div>
+                    </div>
+                    <label>3kHz</label>
+                </div>
+                <div class="eq-slider-group">
+                    <div class="eq-slider-container">
+                        <input type="range" class="eq-slider" id="eq6000" min="-12" max="12" value="0" step="1" orient="vertical">
+                        <div class="eq-value" id="val6000">0dB</div>
+                    </div>
+                    <label>6kHz</label>
+                </div>
+                <div class="eq-slider-group">
+                    <div class="eq-slider-container">
+                        <input type="range" class="eq-slider" id="eq12000" min="-12" max="12" value="0" step="1" orient="vertical">
+                        <div class="eq-value" id="val12000">0dB</div>
+                    </div>
+                    <label>12kHz</label>
+                </div>
+                <div class="eq-slider-group">
+                    <div class="eq-slider-container">
+                        <input type="range" class="eq-slider" id="eq14000" min="-12" max="12" value="0" step="1" orient="vertical">
+                        <div class="eq-value" id="val14000">0dB</div>
+                    </div>
+                    <label>14kHz</label>
+                </div>
+                <div class="eq-slider-group">
+                    <div class="eq-slider-container">
+                        <input type="range" class="eq-slider" id="eq16000" min="-12" max="12" value="0" step="1" orient="vertical">
+                        <div class="eq-value" id="val16000">0dB</div>
+                    </div>
+                    <label>16kHz</label>
+                </div>
+            </div>
+
+            <div class="modal-buttons">
+                <button class="modal-btn modal-btn-cancel" onclick="resetEqualizer()">Zurücksetzen</button>
+                <button class="modal-btn modal-btn-submit" onclick="closeEqualizer()">Fertig</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="uploadModal">
+        <div class="modal-content">
+            <div class="modal-header">Songs hochladen</div>
+            <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+                <input type="file" id="fileInput" accept=".mp3,.wav,.ogg,.flac,.m4a" multiple onchange="handleFileSelect(event)">
+                <div class="upload-icon">📁</div>
+                <p>Klicke hier oder ziehe Dateien rein</p>
+                <p class="upload-info">Unterstützt: MP3, WAV, OGG, FLAC, M4A</p>
+            </div>
+            <div class="file-list" id="fileList" style="display:none;"></div>
+            <div class="modal-buttons">
+                <button class="modal-btn modal-btn-cancel" onclick="closeUploadModal()">Abbrechen</button>
+                <button class="modal-btn modal-btn-submit" id="uploadButton" onclick="uploadFiles()" style="display:none;">
+                    Hochladen
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="editModal">
+        <div class="modal-content">
+            <div class="modal-header">Song bearbeiten</div>
+            <input type="hidden" id="editSongId">
+            <div class="form-group">
+                <label>Titel</label>
+                <input type="text" id="editTitle" placeholder="Song Titel">
+            </div>
+            <div class="form-group">
+                <label>Artist</label>
+                <input type="text" id="editArtist" placeholder="Artist Name">
+            </div>
+            <div class="form-group">
+                <label>Album</label>
+                <input type="text" id="editAlbum" placeholder="Album Name">
+            </div>
+            <div class="modal-buttons">
+                <button class="modal-btn modal-btn-delete" onclick="deleteSong()">🗑️ Löschen</button>
+                <button class="modal-btn modal-btn-cancel" onclick="closeEditModal()">Abbrechen</button>
+                <button class="modal-btn modal-btn-submit" onclick="saveSongEdit()">Speichern</button>
             </div>
         </div>
     </div>
