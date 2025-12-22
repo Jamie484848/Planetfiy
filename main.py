@@ -1863,6 +1863,24 @@ def update_time():
     
     return jsonify({'success': True})
 
+
+
+@app.route("/rpc_state")
+def rpc_state():
+    if player_state["current_track_index"] == -1:
+        return jsonify({"playing": False})
+
+    song = playlist[player_state["current_track_index"]]
+
+    return jsonify({
+        "playing": player_state["is_playing"],
+        "title": song["title"],
+        "artist": song["artist"],
+        "start": int(time.time()) - player_state["current_time"],
+        "end": int(time.time()) - player_state["current_time"] + song["duration"]
+    })
+
+
 if __name__ == '__main__':
     threading.Thread(target=init_discord_rpc, daemon=True).start()
     
