@@ -6,7 +6,10 @@ from pypresence import Presence
 import threading
 from werkzeug.utils import secure_filename
 import mimetypes
+from flask_cors import CORS
 
+app = Flask(__name__)
+CORS(app)  # Diese Zeile hinzufügen!
 # Neue Imports für Metadaten-Erkennung
 try:
     from mutagen import File as MutagenFile

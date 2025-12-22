@@ -2,3 +2,4 @@ Flask
 Werkzeug
 pypresence
 mutagen
+flask-cors
