@@ -2145,9 +2145,9 @@ if __name__ == '__main__':
     threading.Thread(target=init_discord_rpc, daemon=True).start()
     
     print("🌍 Planetify startet...")
-    print("✨ Öffne http://localhost:5000")
+    print("✨ Öffne http://localhost:10000")
     print("📁 Musik-Ordner: ./music_library/")
     print("🎵 Viel Spaß!")
     
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 10000))
     socketio.run(app, host="0.0.0.0", port=port, debug=False)
