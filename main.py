@@ -1,11 +1,13 @@
 import os
 import time
 import json
+import secrets
 from flask import Flask, render_template_string, jsonify, request, send_from_directory
 from pypresence import Presence
 import threading
 from werkzeug.utils import secure_filename
 import mimetypes
+from flask_socketio import SocketIO, emit, join_room, leave_room
 
 # Neue Imports für Metadaten-Erkennung
 try:
@@ -23,8 +25,9 @@ except ImportError:
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)  # Diese Zeile DIREKT nach app = Flask(__name__)
-
+app.config['SECRET_KEY'] = secrets.token_hex(16)
+CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Config
 UPLOAD_FOLDER = 'music_library'
@@ -40,6 +43,10 @@ CLIENT_ID = "1449141822407315662"
 
 # Songs Database
 SONGS_DB = 'songs_db.json'
+
+# Listening Sessions
+listening_sessions = {}
+# Format: { 'session_id': { 'host': user_id, 'users': [user_ids], 'state': {...} } }
 
 def load_songs_db():
     if os.path.exists(SONGS_DB):
@@ -69,7 +76,6 @@ def allowed_file(filename):
 def extract_metadata(filepath):
     """Extrahiert Metadaten aus Audio-Dateien"""
     if not MUTAGEN_AVAILABLE:
-        # Fallback: Dateiname verwenden
         filename = os.path.basename(filepath)
         title = os.path.splitext(filename)[0]
         return {
@@ -83,7 +89,6 @@ def extract_metadata(filepath):
         audio = MutagenFile(filepath, easy=True)
         
         if audio is None:
-            # Fallback für WAV oder andere nicht unterstützte Formate
             filename = os.path.basename(filepath)
             title = os.path.splitext(filename)[0]
             return {
@@ -93,10 +98,8 @@ def extract_metadata(filepath):
                 'duration': get_audio_duration_fallback(filepath)
             }
         
-        # Titel extrahieren
         title = None
         if hasattr(audio, 'tags') and audio.tags:
-            # Verschiedene Titel-Tags versuchen
             title = (audio.tags.get('title') or 
                     audio.tags.get('TIT2') or 
                     audio.tags.get('\xa9nam'))
@@ -107,7 +110,6 @@ def extract_metadata(filepath):
         if not title:
             title = os.path.splitext(os.path.basename(filepath))[0]
         
-        # Artist extrahieren
         artist = None
         if hasattr(audio, 'tags') and audio.tags:
             artist = (audio.tags.get('artist') or 
@@ -120,7 +122,6 @@ def extract_metadata(filepath):
         if not artist:
             artist = 'Unbekannter Artist'
         
-        # Album extrahieren
         album = None
         if hasattr(audio, 'tags') and audio.tags:
             album = (audio.tags.get('album') or 
@@ -133,8 +134,7 @@ def extract_metadata(filepath):
         if not album:
             album = ''
         
-        # Duration extrahieren
-        duration = 180  # Fallback
+        duration = 180
         if hasattr(audio.info, 'length'):
             duration = int(audio.info.length)
         
@@ -149,7 +149,6 @@ def extract_metadata(filepath):
         
     except Exception as e:
         print(f"⚠️ Metadaten-Fehler für {filepath}: {e}")
-        # Fallback
         filename = os.path.basename(filepath)
         title = os.path.splitext(filename)[0]
         return {
@@ -160,7 +159,6 @@ def extract_metadata(filepath):
         }
 
 def get_audio_duration_fallback(filepath):
-    """Fallback für Duration-Berechnung basierend auf Dateigröße"""
     try:
         size_mb = os.path.getsize(filepath) / (1024 * 1024)
         return int(size_mb * 60)
@@ -168,7 +166,6 @@ def get_audio_duration_fallback(filepath):
         return 180
 
 def get_audio_duration(filepath):
-    """Legacy-Funktion für Kompatibilität"""
     return get_audio_duration_fallback(filepath)
 
 def init_discord_rpc():
@@ -225,6 +222,171 @@ def update_discord_presence():
     except Exception as e:
         print(f"Discord Fehler: {e}")
 
+# WebSocket Events für Sync-Listening
+@socketio.on('create_session')
+def handle_create_session(data):
+    session_id = secrets.token_urlsafe(16)
+    user_id = request.sid
+    
+    listening_sessions[session_id] = {
+        'host': user_id,
+        'users': [user_id],
+        'state': {
+            'current_track_index': -1,
+            'current_time': 0,
+            'is_playing': False
+        }
+    }
+    
+    join_room(session_id)
+    emit('session_created', {'session_id': session_id, 'is_host': True})
+    print(f"📻 Session erstellt: {session_id}")
+
+@socketio.on('join_session')
+def handle_join_session(data):
+    session_id = data.get('session_id')
+    user_id = request.sid
+    
+    if session_id not in listening_sessions:
+        emit('error', {'message': 'Session nicht gefunden'})
+        return
+    
+    session = listening_sessions[session_id]
+    
+    if user_id not in session['users']:
+        session['users'].append(user_id)
+    
+    join_room(session_id)
+    
+    # Sende aktuelle Session-Daten
+    emit('session_joined', {
+        'session_id': session_id,
+        'is_host': user_id == session['host'],
+        'state': session['state'],
+        'user_count': len(session['users'])
+    })
+    
+    # Benachrichtige alle in der Session
+    emit('user_joined', {
+        'user_count': len(session['users'])
+    }, room=session_id)
+    
+    print(f"👤 User joined session {session_id}: {len(session['users'])} users")
+
+@socketio.on('leave_session')
+def handle_leave_session(data):
+    session_id = data.get('session_id')
+    user_id = request.sid
+    
+    if session_id in listening_sessions:
+        session = listening_sessions[session_id]
+        
+        if user_id in session['users']:
+            session['users'].remove(user_id)
+        
+        leave_room(session_id)
+        
+        # Wenn Host verlässt, Session schließen
+        if user_id == session['host']:
+            emit('session_closed', {}, room=session_id)
+            del listening_sessions[session_id]
+            print(f"🔒 Session geschlossen: {session_id}")
+        else:
+            emit('user_left', {
+                'user_count': len(session['users'])
+            }, room=session_id)
+            print(f"👋 User left session {session_id}")
+
+@socketio.on('sync_play')
+def handle_sync_play(data):
+    session_id = data.get('session_id')
+    
+    if session_id not in listening_sessions:
+        return
+    
+    session = listening_sessions[session_id]
+    
+    # Nur Host kann steuern
+    if request.sid != session['host']:
+        return
+    
+    session['state']['current_track_index'] = data.get('track_index', session['state']['current_track_index'])
+    session['state']['current_time'] = data.get('time', 0)
+    session['state']['is_playing'] = True
+    
+    # Sende an alle in der Session
+    emit('sync_state', session['state'], room=session_id)
+    print(f"▶️ Sync play in session {session_id}")
+
+@socketio.on('sync_pause')
+def handle_sync_pause(data):
+    session_id = data.get('session_id')
+    
+    if session_id not in listening_sessions:
+        return
+    
+    session = listening_sessions[session_id]
+    
+    # Nur Host kann steuern
+    if request.sid != session['host']:
+        return
+    
+    session['state']['current_time'] = data.get('time', session['state']['current_time'])
+    session['state']['is_playing'] = False
+    
+    emit('sync_state', session['state'], room=session_id)
+    print(f"⏸️ Sync pause in session {session_id}")
+
+@socketio.on('sync_seek')
+def handle_sync_seek(data):
+    session_id = data.get('session_id')
+    
+    if session_id not in listening_sessions:
+        return
+    
+    session = listening_sessions[session_id]
+    
+    # Nur Host kann steuern
+    if request.sid != session['host']:
+        return
+    
+    session['state']['current_time'] = data.get('time', 0)
+    
+    emit('sync_state', session['state'], room=session_id)
+
+@socketio.on('sync_time_update')
+def handle_sync_time_update(data):
+    session_id = data.get('session_id')
+    
+    if session_id not in listening_sessions:
+        return
+    
+    session = listening_sessions[session_id]
+    
+    # Nur Host kann Zeit-Updates senden
+    if request.sid != session['host']:
+        return
+    
+    session['state']['current_time'] = data.get('time', 0)
+    
+    # Sende an alle außer Host
+    emit('sync_time_update', {'time': data.get('time', 0)}, room=session_id, skip_sid=request.sid)
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    user_id = request.sid
+    
+    # Entferne User aus allen Sessions
+    for session_id, session in list(listening_sessions.items()):
+        if user_id in session['users']:
+            session['users'].remove(user_id)
+            
+            if user_id == session['host']:
+                emit('session_closed', {}, room=session_id)
+                del listening_sessions[session_id]
+            else:
+                emit('user_left', {'user_count': len(session['users'])}, room=session_id)
+
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="de">
@@ -232,6 +394,7 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Planetify - Deine Musik</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -295,6 +458,47 @@ HTML_TEMPLATE = """
         .nav-item.active {
             color: #fff;
             background: linear-gradient(135deg, rgba(255, 107, 0, 0.2), rgba(255, 61, 0, 0.1));
+        }
+
+        .sync-section {
+            margin-top: auto;
+            padding-top: 24px;
+            border-top: 1px solid #1a1a1a;
+        }
+
+        .sync-btn {
+            width: 100%;
+            background: linear-gradient(135deg, #ff6b00 0%, #ff3d00 100%);
+            color: #fff;
+            border: none;
+            padding: 12px;
+            border-radius: 24px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 8px;
+        }
+
+        .sync-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(255, 107, 0, 0.5);
+        }
+
+        .sync-status {
+            text-align: center;
+            font-size: 12px;
+            color: #b3b3b3;
+            padding: 8px;
+        }
+
+        .sync-active {
+            background: rgba(88, 101, 242, 0.15);
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 13px;
+            color: #5865F2;
+            margin-top: 8px;
         }
 
         .main-content {
@@ -527,6 +731,11 @@ HTML_TEMPLATE = """
             transform: scale(1.15);
         }
 
+        .control-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
         .play-pause-btn {
             width: 40px;
             height: 40px;
@@ -584,138 +793,6 @@ HTML_TEMPLATE = """
             display: flex;
             align-items: center;
             gap: 12px;
-        }
-
-        .player-eq {
-            display: flex;
-            align-items: center;
-        }
-
-        .eq-btn {
-            background: transparent;
-            border: 1px solid #333;
-            color: #b3b3b3;
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            cursor: pointer;
-            font-size: 18px;
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .eq-btn:hover {
-            border-color: #ff6b00;
-            color: #ff6b00;
-            transform: scale(1.1);
-        }
-
-        .eq-modal {
-            width: 700px;
-            max-width: 95%;
-        }
-
-        .eq-presets {
-            display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            gap: 8px;
-            margin-bottom: 32px;
-        }
-
-        .preset-btn {
-            background: #0a0a0a;
-            border: 1px solid #333;
-            color: #b3b3b3;
-            padding: 10px;
-            border-radius: 8px;
-            font-size: 13px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .preset-btn:hover {
-            border-color: #ff6b00;
-            color: #fff;
-        }
-
-        .preset-btn.active {
-            background: linear-gradient(135deg, #ff6b00, #ff3d00);
-            border-color: #ff6b00;
-            color: #fff;
-        }
-
-        .eq-sliders {
-            display: flex;
-            justify-content: space-between;
-            gap: 12px;
-            margin-bottom: 32px;
-            padding: 20px;
-            background: #0a0a0a;
-            border-radius: 12px;
-            min-height: 280px;
-        }
-
-        .eq-slider-group {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .eq-slider-container {
-            position: relative;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .eq-slider {
-            -webkit-appearance: slider-vertical;
-            writing-mode: bt-lr;
-            height: 180px;
-            width: 4px;
-            background: #333;
-            border-radius: 2px;
-            outline: none;
-            cursor: pointer;
-        }
-
-        .eq-slider::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 16px;
-            height: 16px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #ff6b00, #ff3d00);
-            cursor: pointer;
-            box-shadow: 0 2px 8px rgba(255, 107, 0, 0.4);
-        }
-
-        .eq-slider::-moz-range-thumb {
-            width: 16px;
-            height: 16px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #ff6b00, #ff3d00);
-            cursor: pointer;
-            border: none;
-            box-shadow: 0 2px 8px rgba(255, 107, 0, 0.4);
-        }
-
-        .eq-value {
-            font-size: 11px;
-            color: #ff6b00;
-            font-weight: 600;
-            min-width: 40px;
-            text-align: center;
-        }
-
-        .eq-slider-group label {
-            font-size: 11px;
-            color: #b3b3b3;
-            font-weight: 500;
         }
 
         .volume-slider {
@@ -957,6 +1034,65 @@ HTML_TEMPLATE = """
             opacity: 0.5;
         }
 
+        .link-display {
+            background: #0a0a0a;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .link-display input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: #fff;
+            font-size: 13px;
+            font-family: monospace;
+        }
+
+        .copy-btn {
+            background: linear-gradient(135deg, #ff6b00, #ff3d00);
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .copy-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .confirm-dialog {
+            text-align: center;
+            padding: 20px 0;
+        }
+
+        .confirm-dialog p {
+            font-size: 15px;
+            color: #b3b3b3;
+            margin-bottom: 24px;
+            line-height: 1.6;
+        }
+
+        .host-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #ff6b00, #ff3d00);
+            color: #fff;
+            font-size: 10px;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-weight: 700;
+            margin-left: 8px;
+        }
+
         ::-webkit-scrollbar {
             width: 12px;
         }
@@ -999,6 +1135,14 @@ HTML_TEMPLATE = """
                     Suchen
                 </div>
             </div>
+
+            <div class="sync-section">
+                <button class="sync-btn" onclick="createListeningSession()">
+                    🎧 Session erstellen
+                </button>
+                <div class="sync-status" id="syncStatus">Nicht verbunden</div>
+                <div id="syncActive" style="display: none;"></div>
+            </div>
         </div>
 
         <div class="main-content">
@@ -1036,9 +1180,9 @@ HTML_TEMPLATE = """
 
         <div class="player-controls">
             <div class="control-buttons">
-                <button class="control-btn" onclick="previousTrack()">⏮️</button>
+                <button class="control-btn" id="prevBtn" onclick="previousTrack()">⏮️</button>
                 <button class="control-btn play-pause-btn" id="playPauseBtn" onclick="togglePlay()">▶️</button>
-                <button class="control-btn" onclick="nextTrack()">⏭️</button>
+                <button class="control-btn" id="nextBtn" onclick="nextTrack()">⏭️</button>
             </div>
             <div class="progress-section">
                 <span class="time-label" id="currentTime">0:00</span>
@@ -1055,112 +1199,49 @@ HTML_TEMPLATE = """
                 <div class="volume-level" id="volumeLevel"></div>
             </div>
         </div>
-
-        <div class="player-eq">
-            <button class="eq-btn" onclick="toggleEqualizer()" title="Equalizer">
-                🎚️
-            </button>
-        </div>
     </div>
 
-    <!-- Equalizer Modal -->
-    <div class="modal" id="eqModal">
-        <div class="modal-content eq-modal">
-            <div class="modal-header">Equalizer</div>
-            
-            <div class="eq-presets">
-                <button class="preset-btn active" onclick="applyPreset('flat')">Natürlich</button>
-                <button class="preset-btn" onclick="applyPreset('bass')">Bass-Booster</button>
-                <button class="preset-btn" onclick="applyPreset('treble')">Höhen-Booster</button>
-                <button class="preset-btn" onclick="applyPreset('vocal')">Gesprochenes Wort</button>
-                <button class="preset-btn" onclick="applyPreset('rock')">Rock</button>
-                <button class="preset-btn" onclick="applyPreset('pop')">Pop</button>
-                <button class="preset-btn" onclick="applyPreset('jazz')">Jazz</button>
-                <button class="preset-btn" onclick="applyPreset('classical')">Klassik</button>
-                <button class="preset-btn" onclick="applyPreset('electronic')">Electronic</button>
-                <button class="preset-btn" onclick="applyPreset('hiphop')">Hip-Hop</button>
+    <!-- Session Create Modal -->
+    <div class="modal" id="sessionModal">
+        <div class="modal-content">
+            <div class="modal-header">Listening Session erstellen</div>
+            <p style="color: #b3b3b3; margin-bottom: 20px;">
+                Erstelle eine Session und teile den Link mit deinen Freunden, um gemeinsam Musik zu hören!
+            </p>
+            <div class="link-display" id="sessionLinkDisplay" style="display: none;">
+                <input type="text" id="sessionLink" readonly>
+                <button class="copy-btn" onclick="copySessionLink()">Kopieren</button>
             </div>
-
-            <div class="eq-sliders">
-                <div class="eq-slider-group">
-                    <div class="eq-slider-container">
-                        <input type="range" class="eq-slider" id="eq60" min="-12" max="12" value="0" step="1" orient="vertical">
-                        <div class="eq-value" id="val60">0dB</div>
-                    </div>
-                    <label>60Hz</label>
-                </div>
-                <div class="eq-slider-group">
-                    <div class="eq-slider-container">
-                        <input type="range" class="eq-slider" id="eq170" min="-12" max="12" value="0" step="1" orient="vertical">
-                        <div class="eq-value" id="val170">0dB</div>
-                    </div>
-                    <label>170Hz</label>
-                </div>
-                <div class="eq-slider-group">
-                    <div class="eq-slider-container">
-                        <input type="range" class="eq-slider" id="eq310" min="-12" max="12" value="0" step="1" orient="vertical">
-                        <div class="eq-value" id="val310">0dB</div>
-                    </div>
-                    <label>310Hz</label>
-                </div>
-                <div class="eq-slider-group">
-                    <div class="eq-slider-container">
-                        <input type="range" class="eq-slider" id="eq600" min="-12" max="12" value="0" step="1" orient="vertical">
-                        <div class="eq-value" id="val600">0dB</div>
-                    </div>
-                    <label>600Hz</label>
-                </div>
-                <div class="eq-slider-group">
-                    <div class="eq-slider-container">
-                        <input type="range" class="eq-slider" id="eq1000" min="-12" max="12" value="0" step="1" orient="vertical">
-                        <div class="eq-value" id="val1000">0dB</div>
-                    </div>
-                    <label>1kHz</label>
-                </div>
-                <div class="eq-slider-group">
-                    <div class="eq-slider-container">
-                        <input type="range" class="eq-slider" id="eq3000" min="-12" max="12" value="0" step="1" orient="vertical">
-                        <div class="eq-value" id="val3000">0dB</div>
-                    </div>
-                    <label>3kHz</label>
-                </div>
-                <div class="eq-slider-group">
-                    <div class="eq-slider-container">
-                        <input type="range" class="eq-slider" id="eq6000" min="-12" max="12" value="0" step="1" orient="vertical">
-                        <div class="eq-value" id="val6000">0dB</div>
-                    </div>
-                    <label>6kHz</label>
-                </div>
-                <div class="eq-slider-group">
-                    <div class="eq-slider-container">
-                        <input type="range" class="eq-slider" id="eq12000" min="-12" max="12" value="0" step="1" orient="vertical">
-                        <div class="eq-value" id="val12000">0dB</div>
-                    </div>
-                    <label>12kHz</label>
-                </div>
-                <div class="eq-slider-group">
-                    <div class="eq-slider-container">
-                        <input type="range" class="eq-slider" id="eq14000" min="-12" max="12" value="0" step="1" orient="vertical">
-                        <div class="eq-value" id="val14000">0dB</div>
-                    </div>
-                    <label>14kHz</label>
-                </div>
-                <div class="eq-slider-group">
-                    <div class="eq-slider-container">
-                        <input type="range" class="eq-slider" id="eq16000" min="-12" max="12" value="0" step="1" orient="vertical">
-                        <div class="eq-value" id="val16000">0dB</div>
-                    </div>
-                    <label>16kHz</label>
-                </div>
-            </div>
-
             <div class="modal-buttons">
-                <button class="modal-btn modal-btn-cancel" onclick="resetEqualizer()">Zurücksetzen</button>
-                <button class="modal-btn modal-btn-submit" onclick="closeEqualizer()">Fertig</button>
+                <button class="modal-btn modal-btn-cancel" onclick="closeSessionModal()">Abbrechen</button>
+                <button class="modal-btn modal-btn-submit" id="createSessionBtn" onclick="confirmCreateSession()">
+                    Session erstellen
+                </button>
             </div>
         </div>
     </div>
 
+    <!-- Join Session Modal -->
+    <div class="modal" id="joinModal">
+        <div class="modal-content">
+            <div class="modal-header">Session beitreten</div>
+            <div class="confirm-dialog">
+                <p>
+                    Du wurdest eingeladen, einer Listening Session beizutreten.<br>
+                    <strong>Bist du sicher, dass du beitreten möchtest?</strong>
+                </p>
+                <p style="font-size: 13px; color: #666;">
+                    Der Host steuert die Wiedergabe für alle Teilnehmer.
+                </p>
+            </div>
+            <div class="modal-buttons">
+                <button class="modal-btn modal-btn-cancel" onclick="closeJoinModal()">Nein</button>
+                <button class="modal-btn modal-btn-submit" onclick="confirmJoinSession()">Ja, beitreten</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload Modal -->
     <div class="modal" id="uploadModal">
         <div class="modal-content">
             <div class="modal-header">Songs hochladen</div>
@@ -1180,6 +1261,7 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
+    <!-- Edit Modal -->
     <div class="modal" id="editModal">
         <div class="modal-content">
             <div class="modal-header">Song bearbeiten</div>
@@ -1211,6 +1293,260 @@ HTML_TEMPLATE = """
         let isPlaying = false;
         let selectedFiles = [];
 
+        // Socket.IO Connection
+        const socket = io();
+
+        // Sync-Listening State
+        let syncState = {
+            active: false,
+            sessionId: null,
+            isHost: false,
+            userCount: 0
+        };
+
+        let pendingSessionId = null;
+
+        // Socket.IO Event Handlers
+        socket.on('connect', () => {
+            console.log('✅ WebSocket verbunden');
+        });
+
+        socket.on('session_created', (data) => {
+            syncState.active = true;
+            syncState.sessionId = data.session_id;
+            syncState.isHost = data.is_host;
+            syncState.userCount = 1;
+
+            updateSyncUI();
+            
+            const link = `${window.location.origin}?session=${data.session_id}`;
+            document.getElementById('sessionLink').value = link;
+            document.getElementById('sessionLinkDisplay').style.display = 'flex';
+            document.getElementById('createSessionBtn').style.display = 'none';
+            
+            console.log('📻 Session erstellt:', data.session_id);
+        });
+
+        socket.on('session_joined', (data) => {
+            syncState.active = true;
+            syncState.sessionId = data.session_id;
+            syncState.isHost = data.is_host;
+            syncState.userCount = data.user_count;
+
+            updateSyncUI();
+            closeJoinModal();
+
+            // Sync mit aktuellem Status
+            if (data.state.current_track_index >= 0) {
+                console.log('🔄 Syncing with host state:', data.state);
+                syncWithState(data.state);
+            } else {
+                console.log('⏸️ Session beigetreten, warte auf Host...');
+            }
+
+            console.log('👥 Session beigetreten:', data.session_id);
+        });
+
+        socket.on('user_joined', (data) => {
+            syncState.userCount = data.user_count;
+            updateSyncUI();
+            console.log('➕ User beigetreten:', data.user_count);
+        });
+
+        socket.on('user_left', (data) => {
+            syncState.userCount = data.user_count;
+            updateSyncUI();
+            console.log('➖ User verlassen:', data.user_count);
+        });
+
+        socket.on('session_closed', () => {
+            alert('🔒 Die Session wurde vom Host geschlossen.');
+            leaveSession();
+        });
+
+        socket.on('sync_state', (state) => {
+            if (!syncState.isHost) {
+                syncWithState(state);
+            }
+        });
+
+        socket.on('sync_time_update', (data) => {
+            if (!syncState.isHost && currentTrackIndex >= 0) {
+                // Nur synchronisieren wenn Unterschied größer als 3 Sekunden
+                const timeDiff = Math.abs(audioPlayer.currentTime - data.time);
+                if (timeDiff > 3) {
+                    console.log(`⏱️ Time drift detected: ${timeDiff}s, syncing to ${data.time}s`);
+                    audioPlayer.currentTime = data.time;
+                }
+            }
+        });
+
+        socket.on('error', (data) => {
+            alert('❌ Fehler: ' + data.message);
+        });
+
+        // Sync Functions
+        function createListeningSession() {
+            document.getElementById('sessionModal').classList.add('active');
+            document.getElementById('sessionLinkDisplay').style.display = 'none';
+            document.getElementById('createSessionBtn').style.display = 'block';
+        }
+
+        function confirmCreateSession() {
+            socket.emit('create_session', {});
+        }
+
+        function closeSessionModal() {
+            document.getElementById('sessionModal').classList.remove('active');
+        }
+
+        function copySessionLink() {
+            const linkInput = document.getElementById('sessionLink');
+            linkInput.select();
+            document.execCommand('copy');
+            
+            const btn = event.target;
+            btn.textContent = '✓ Kopiert!';
+            setTimeout(() => {
+                btn.textContent = 'Kopieren';
+            }, 2000);
+        }
+
+        function checkForSessionInURL() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const sessionId = urlParams.get('session');
+            
+            if (sessionId) {
+                pendingSessionId = sessionId;
+                document.getElementById('joinModal').classList.add('active');
+            }
+        }
+
+        function confirmJoinSession() {
+            if (pendingSessionId) {
+                socket.emit('join_session', { session_id: pendingSessionId });
+                // Remove session from URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        }
+
+        function closeJoinModal() {
+            document.getElementById('joinModal').classList.remove('active');
+            pendingSessionId = null;
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+
+        function leaveSession() {
+            if (syncState.sessionId) {
+                socket.emit('leave_session', { session_id: syncState.sessionId });
+            }
+            
+            syncState.active = false;
+            syncState.sessionId = null;
+            syncState.isHost = false;
+            syncState.userCount = 0;
+            
+            updateSyncUI();
+            enablePlayerControls();
+        }
+
+        function syncWithState(state) {
+            console.log('🔄 Syncing state:', state);
+            
+            if (state.current_track_index >= 0 && state.current_track_index < playlist.length) {
+                if (state.current_track_index !== currentTrackIndex) {
+                    console.log('🎵 Playing track:', state.current_track_index);
+                    playTrack(state.current_track_index, true);
+                    
+                    // Warte bis Track geladen ist, dann sync Zeit
+                    audioPlayer.addEventListener('loadedmetadata', () => {
+                        setTimeout(() => {
+                            console.log('⏱️ Setting initial time to:', state.current_time);
+                            audioPlayer.currentTime = state.current_time;
+                        }, 100);
+                    }, { once: true });
+                } else {
+                    // Gleicher Track, nur Zeit synchronisieren
+                    const timeDiff = Math.abs(audioPlayer.currentTime - state.current_time);
+                    if (timeDiff > 1) {
+                        console.log(`⏱️ Syncing time: ${audioPlayer.currentTime}s -> ${state.current_time}s (diff: ${timeDiff}s)`);
+                        audioPlayer.currentTime = state.current_time;
+                    }
+                }
+            }
+
+            // Update play/pause state
+            setTimeout(() => {
+                if (state.is_playing && !isPlaying) {
+                    console.log('▶️ Syncing play state');
+                    audioPlayer.play().catch(e => console.log('Sync play error:', e));
+                    isPlaying = true;
+                    document.getElementById('playPauseBtn').textContent = '⏸️';
+                } else if (!state.is_playing && isPlaying) {
+                    console.log('⏸️ Syncing pause state');
+                    audioPlayer.pause();
+                    isPlaying = false;
+                    document.getElementById('playPauseBtn').textContent = '▶️';
+                }
+            }, 200);
+        }
+
+        function updateSyncUI() {
+            const statusEl = document.getElementById('syncStatus');
+            const activeEl = document.getElementById('syncActive');
+            
+            if (syncState.active) {
+                const hostBadge = syncState.isHost ? '<span class="host-badge">HOST</span>' : '';
+                statusEl.textContent = '';
+                activeEl.innerHTML = `
+                    <div class="sync-active">
+                        🎧 Session aktiv ${hostBadge}<br>
+                        <small>${syncState.userCount} ${syncState.userCount === 1 ? 'Person' : 'Personen'} hört zu</small><br>
+                        <button class="sync-btn" style="margin-top: 8px; font-size: 12px; padding: 8px;" onclick="leaveSession()">
+                            Verlassen
+                        </button>
+                    </div>
+                `;
+                activeEl.style.display = 'block';
+
+                // Disable controls for non-hosts
+                if (!syncState.isHost) {
+                    disablePlayerControls();
+                } else {
+                    enablePlayerControls();
+                }
+            } else {
+                statusEl.textContent = 'Nicht verbunden';
+                activeEl.style.display = 'none';
+                enablePlayerControls();
+            }
+        }
+
+        function disablePlayerControls() {
+            document.getElementById('prevBtn').disabled = true;
+            document.getElementById('nextBtn').disabled = true;
+            document.getElementById('playPauseBtn').disabled = true;
+            document.getElementById('progressContainer').style.pointerEvents = 'none';
+            
+            // Disable song cards
+            document.querySelectorAll('.song-card').forEach(card => {
+                card.style.pointerEvents = 'none';
+                card.style.opacity = '0.5';
+            });
+        }
+
+        function enablePlayerControls() {
+            document.getElementById('prevBtn').disabled = false;
+            document.getElementById('nextBtn').disabled = false;
+            document.getElementById('playPauseBtn').disabled = false;
+            document.getElementById('progressContainer').style.pointerEvents = 'auto';
+            
+            document.querySelectorAll('.song-card').forEach(card => {
+                card.style.pointerEvents = 'auto';
+                card.style.opacity = '1';
+            });
+        }
+
         // Volume Slider with Drag Support
         let isDraggingVolume = false;
         
@@ -1239,105 +1575,6 @@ HTML_TEMPLATE = """
         document.addEventListener('mouseup', () => {
             isDraggingVolume = false;
         });
-
-        // Audio Context & Equalizer
-        let audioContext;
-        let sourceNode;
-        let gainNode;
-        let filters = [];
-        let currentPreset = 'flat';
-
-        const frequencies = [60, 170, 310, 600, 1000, 3000, 6000, 12000, 14000, 16000];
-
-        const eqPresets = {
-            flat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            bass: [8, 6, 4, 2, 0, 0, -2, -2, -2, -2],
-            treble: [-2, -2, -2, 0, 0, 2, 4, 6, 8, 8],
-            vocal: [-2, -1, 2, 4, 4, 3, 1, 0, -1, -2],
-            rock: [5, 3, -2, -3, -1, 1, 3, 4, 4, 4],
-            pop: [-1, 2, 4, 4, 2, 0, -1, -1, -1, -1],
-            jazz: [3, 2, 0, 1, -1, -1, 0, 1, 2, 3],
-            classical: [3, 2, -1, -2, -2, -1, 2, 3, 4, 4],
-            electronic: [6, 4, 1, 0, -2, 2, 1, 2, 6, 7],
-            hiphop: [7, 5, 1, 2, -1, -1, 1, -1, 2, 3]
-        };
-
-        function initAudioContext() {
-            if (audioContext) return;
-
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            sourceNode = audioContext.createMediaElementSource(audioPlayer);
-            gainNode = audioContext.createGain();
-
-            // Create filters for each frequency
-            frequencies.forEach((freq, i) => {
-                const filter = audioContext.createBiquadFilter();
-                filter.type = i === 0 ? 'lowshelf' : i === frequencies.length - 1 ? 'highshelf' : 'peaking';
-                filter.frequency.value = freq;
-                filter.Q.value = 1;
-                filter.gain.value = 0;
-                filters.push(filter);
-            });
-
-            // Connect everything
-            sourceNode.connect(filters[0]);
-            for (let i = 0; i < filters.length - 1; i++) {
-                filters[i].connect(filters[i + 1]);
-            }
-            filters[filters.length - 1].connect(gainNode);
-            gainNode.connect(audioContext.destination);
-
-            console.log('🎚️ Equalizer initialisiert');
-        }
-
-        function toggleEqualizer() {
-            document.getElementById('eqModal').classList.add('active');
-        }
-
-        function closeEqualizer() {
-            document.getElementById('eqModal').classList.remove('active');
-        }
-
-        function applyPreset(presetName) {
-            currentPreset = presetName;
-            const values = eqPresets[presetName];
-
-            // Update UI
-            document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.remove('active'));
-            event.target.classList.add('active');
-
-            // Apply to filters and sliders
-            frequencies.forEach((freq, i) => {
-                const value = values[i];
-                const slider = document.getElementById(`eq${freq}`);
-                const valueDisplay = document.getElementById(`val${freq}`);
-                
-                slider.value = value;
-                valueDisplay.textContent = value >= 0 ? `+${value}dB` : `${value}dB`;
-
-                if (filters[i]) {
-                    filters[i].gain.value = value;
-                }
-            });
-        }
-
-        function resetEqualizer() {
-            applyPreset('flat');
-            document.querySelector('.preset-btn').classList.add('active');
-        }
-
-        function updateEQValue(freq, value) {
-            const valueDisplay = document.getElementById(`val${freq}`);
-            valueDisplay.textContent = value >= 0 ? `+${value}dB` : `${value}dB`;
-
-            const index = frequencies.indexOf(parseInt(freq));
-            if (filters[index]) {
-                filters[index].gain.value = parseFloat(value);
-            }
-
-            // Deselect preset if manually adjusted
-            document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.remove('active'));
-        }
 
         function formatTime(seconds) {
             if (!seconds || isNaN(seconds) || seconds === Infinity) return '0:00';
@@ -1387,14 +1624,9 @@ HTML_TEMPLATE = """
             }).join('');
         }
 
-        function playTrack(index) {
+        function playTrack(index, isSync = false) {
             currentTrackIndex = index;
             const track = playlist[index];
-
-            // Initialize audio context on first play
-            if (!audioContext) {
-                initAudioContext();
-            }
             
             audioPlayer.src = `/stream/${track.filename}`;
             audioPlayer.load();
@@ -1405,6 +1637,16 @@ HTML_TEMPLATE = """
                 isPlaying = true;
                 document.getElementById('playPauseBtn').textContent = '⏸️';
                 updatePlayerInfo(track, realDuration);
+
+                // Sync with session - Host sendet an alle
+                if (syncState.active && syncState.isHost && !isSync) {
+                    console.log('📡 Broadcasting play to session');
+                    socket.emit('sync_play', {
+                        session_id: syncState.sessionId,
+                        track_index: index,
+                        time: 0
+                    });
+                }
             }, { once: true });
         }
 
@@ -1439,6 +1681,15 @@ HTML_TEMPLATE = """
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ time: Math.floor(audioPlayer.currentTime) })
                 });
+
+                // Sync with session
+                if (syncState.active && syncState.isHost) {
+                    console.log('📡 Broadcasting pause to session');
+                    socket.emit('sync_pause', {
+                        session_id: syncState.sessionId,
+                        time: Math.floor(audioPlayer.currentTime)
+                    });
+                }
             } else {
                 audioPlayer.play().catch(e => console.log('Play error:', e));
                 isPlaying = true;
@@ -1452,6 +1703,16 @@ HTML_TEMPLATE = """
                         duration: Math.floor(audioPlayer.duration)
                     })
                 });
+
+                // Sync with session
+                if (syncState.active && syncState.isHost) {
+                    console.log('📡 Broadcasting play to session');
+                    socket.emit('sync_play', {
+                        session_id: syncState.sessionId,
+                        track_index: currentTrackIndex,
+                        time: Math.floor(audioPlayer.currentTime)
+                    });
+                }
             }
         }
 
@@ -1516,39 +1777,39 @@ HTML_TEMPLATE = """
         }
 
         function uploadFiles() {
-    if (selectedFiles.length === 0) return;
+            if (selectedFiles.length === 0) return;
 
-    const formData = new FormData();
-    selectedFiles.forEach(file => {
-        formData.append('files', file);
-    });
+            const formData = new FormData();
+            selectedFiles.forEach(file => {
+                formData.append('files', file);
+            });
 
-    const uploadButton = document.getElementById('uploadButton');
-    uploadButton.textContent = 'Wird hochgeladen...';
-    uploadButton.disabled = true;
+            const uploadButton = document.getElementById('uploadButton');
+            uploadButton.textContent = 'Wird hochgeladen...';
+            uploadButton.disabled = true;
 
-    fetch('/upload', {
-        method: 'POST',
-        body: formData
-    })
-    .then(res => {
-        if (!res.ok) {
-            throw new Error('Upload fehlgeschlagen');
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => {
+                if (!res.ok) {
+                    throw new Error('Upload fehlgeschlagen');
+                }
+                return res.json();
+            })
+            .then(data => {
+                closeUploadModal();
+                loadPlaylist();
+                alert(`✅ ${data.uploaded} Song(s) erfolgreich hochgeladen!`);
+            })
+            .catch(err => {
+                console.error('Upload Fehler:', err);
+                alert('❌ Fehler beim Hochladen. Siehe Console für Details.');
+                uploadButton.disabled = false;
+                uploadButton.textContent = `${selectedFiles.length} Song(s) hochladen`;
+            });
         }
-        return res.json();
-    })
-    .then(data => {
-        closeUploadModal();
-        loadPlaylist();
-        alert(`✅ ${data.uploaded} Song(s) erfolgreich hochgeladen!`);
-    })
-    .catch(err => {
-        console.error('Upload Fehler:', err);
-        alert('❌ Fehler beim Hochladen. Siehe Console für Details.');
-        uploadButton.disabled = false;
-        uploadButton.textContent = `${selectedFiles.length} Song(s) hochladen`;
-    });
-}
 
         const uploadArea = document.getElementById('uploadArea');
         
@@ -1653,12 +1914,22 @@ HTML_TEMPLATE = """
 
         document.getElementById('progressContainer').addEventListener('click', (e) => {
             if (currentTrackIndex === -1 || !audioPlayer.duration) return;
+            if (syncState.active && !syncState.isHost) return; // Only host can seek
+            
             const bar = e.currentTarget;
             const rect = bar.getBoundingClientRect();
             const clickX = e.clientX - rect.left;
             const width = rect.width;
             const percentage = clickX / width;
             audioPlayer.currentTime = audioPlayer.duration * percentage;
+
+            // Sync seek with session
+            if (syncState.active && syncState.isHost) {
+                socket.emit('sync_seek', {
+                    session_id: syncState.sessionId,
+                    time: Math.floor(audioPlayer.currentTime)
+                });
+            }
         });
 
         document.getElementById('volumeSlider').addEventListener('click', (e) => {
@@ -1673,6 +1944,8 @@ HTML_TEMPLATE = """
         });
 
         let lastUpdateTime = 0;
+        let syncInterval = null;
+
         audioPlayer.addEventListener('timeupdate', () => {
             if (audioPlayer.duration && !isNaN(audioPlayer.duration) && audioPlayer.duration !== Infinity) {
                 const percentage = (audioPlayer.currentTime / audioPlayer.duration) * 100;
@@ -1692,6 +1965,14 @@ HTML_TEMPLATE = """
                             is_playing: !audioPlayer.paused
                         })
                     });
+
+                    // Sync time with session (nur Host sendet)
+                    if (syncState.active && syncState.isHost && isPlaying) {
+                        socket.emit('sync_time_update', {
+                            session_id: syncState.sessionId,
+                            time: Math.floor(audioPlayer.currentTime)
+                        });
+                    }
                 }
             }
         });
@@ -1704,16 +1985,10 @@ HTML_TEMPLATE = """
             console.error('Audio error:', e);
         });
 
+        // Initialize
         loadPlaylist();
         audioPlayer.volume = 0.7;
-
-        // Initialize EQ sliders
-        frequencies.forEach(freq => {
-            const slider = document.getElementById(`eq${freq}`);
-            slider.addEventListener('input', (e) => {
-                updateEQValue(freq, e.target.value);
-            });
-        });
+        checkForSessionInURL();
     </script>
 </body>
 </html>
@@ -1757,7 +2032,6 @@ def upload_files():
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(filepath)
             
-            # Metadaten automatisch extrahieren
             metadata = extract_metadata(filepath)
             
             new_song = {
@@ -1875,5 +2149,5 @@ if __name__ == '__main__':
     print("📁 Musik-Ordner: ./music_library/")
     print("🎵 Viel Spaß!")
     
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", 5000))
+    socketio.run(app, host="0.0.0.0", port=port, debug=False)
