@@ -3105,6 +3105,72 @@ def scan_metadata():
         'errors': errors
     })
 
+@app.route('/share/<int:song_id>/play')
+def share_song_play(song_id):
+    """Player-Seite für Vollversion des Songs"""
+    global playlist
+    if playlist is None:
+        playlist = load_songs_db()
+
+    song = next((s for s in playlist if s['id'] == song_id), None)
+    if not song:
+        return "Song nicht gefunden", 404
+
+    share_url = f"{BASE_URL}/share/{song_id}"
+
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>{song['title']} - Vollversion</title>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                background: #000;
+                color: #fff;
+                text-align: center;
+                padding: 20px;
+            }}
+            .player {{
+                max-width: 400px;
+                margin: 0 auto;
+                background: #1a1a1a;
+                padding: 20px;
+                border-radius: 10px;
+            }}
+            audio {{
+                width: 100%;
+                margin: 20px 0;
+            }}
+            .back {{
+                display: inline-block;
+                margin-top: 20px;
+                padding: 10px 20px;
+                background: #ff6b00;
+                color: white;
+                text-decoration: none;
+                border-radius: 5px;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="player">
+            <h2>{song['title']}</h2>
+            <p>von {song['artist']}</p>
+
+            <audio controls autoplay>
+                <source src="/stream/{song['filename']}" type="audio/mpeg">
+                Dein Browser unterstützt kein Audio.
+            </audio>
+
+            <p><small>Vollversion abspielen</small></p>
+
+            <a href="/" class="back">🏠 Zurück zu Planetify</a>
+        </div>
+    </body>
+    </html>
+    """, 200, {'Content-Type': 'text/html; charset=utf-8'}
+
 @app.route('/share/<int:song_id>/listen')
 def share_song_listen(song_id):
     """Kleine Seite die automatisch die Hörprobe abspielt"""
@@ -3520,7 +3586,7 @@ def embed_test(song_id):
 
 @app.route('/share/<int:song_id>')
 def share_song(song_id):
-    """Gibt eine automatische Player-Seite für den Song zurück"""
+    """Gibt nur Open Graph Metadaten für Discord Embeds zurück - keine sichtbare Seite"""
     global playlist
     if playlist is None:
         playlist = load_songs_db()
@@ -3532,16 +3598,15 @@ def share_song(song_id):
     # Erstelle die Share-URL
     share_url = f"{BASE_URL}/share/{song_id}"
 
-    # HTML-Seite mit Open Graph Metadaten und automatischer Wiedergabe
+    # HTML mit Open Graph Metadaten für Discord - nur Metadaten, keine sichtbare Seite
     share_html = f"""<!DOCTYPE html>
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{song['title']} - {song['artist']} | Planetify</title>
 
     <!-- Discord Embed Metadaten -->
-    <meta name="description" content="🎵 Höre {song['title']} von {song['artist']}{f' • Album: {song["album"]}' if song['album'] else ''} | {song['duration']//60}:{song['duration']%60:02d} | Kostenlose Musik auf Planetify">
+    <meta name="description" content="🎵 {song['artist']} • {song['duration']//60}:{song['duration']%60:02d}">
 
     <!-- Open Graph für Discord -->
     <meta property="og:type" content="music.song">
@@ -3549,20 +3614,14 @@ def share_song(song_id):
     <meta property="og:title" content="{song['title']}">
     <meta property="og:description" content="🎵 {song['artist']} • {song['duration']//60}:{song['duration']%60:02d}
 
-▶️ Hörprobe anhören: {share_url}/listen
-
-🎵 Vollversion spielen: {share_url}">
+▶️ **[HÖRPROBE ANHÖREN]({share_url}/listen)**
+🎵 **[SONG SPIELEN]({share_url}/play)**">
     <meta property="og:url" content="{share_url}">
-    <meta property="og:image" content="{share_url}/cover.png?v=1">
+    <meta property="og:image" content="{share_url}/cover.png?v=4">
     <meta property="og:image:width" content="512">
     <meta property="og:image:height" content="512">
     <meta property="og:image:type" content="image/png">
-    <meta property="og:image:alt" content="Album cover for {song['title']} by {song['artist']}">
-
-    <!-- Audio preview direkt im Embed -->
-    <meta property="og:audio" content="{share_url}/preview.mp3">
-    <meta property="og:audio:secure_url" content="{share_url}/preview.mp3">
-    <meta property="og:audio:type" content="audio/mpeg">
+    <meta property="og:image:secure_url" content="{share_url}/cover.png?v=4">
 
     <!-- Music tags -->
     <meta property="music:musician" content="{song['artist']}">
@@ -3572,186 +3631,16 @@ def share_song(song_id):
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="{song['title']}">
-    <meta name="twitter:description" content="🎵 {song['artist']} • Hörprobe verfügbar • Vollversion auf Planetify">
-    <meta name="twitter:image" content="{share_url}/cover">
+    <meta name="twitter:description" content="🎵 {song['artist']} • Buttons für Hörprobe & Vollversion">
+    <meta name="twitter:image" content="{share_url}/cover.png?v=4">
 
-    <!-- Theme color orange -->
-    <meta name="theme-color" content="#ff6b00">
-    <meta name="color-scheme" content="dark">
-
-    <style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
-
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-            background: radial-gradient(ellipse at top, #1a0f00 0%, #000 50%);
-            color: #fff;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }}
-
-        .player-container {{
-            background: linear-gradient(135deg, rgba(255, 107, 0, 0.1), rgba(255, 61, 0, 0.05));
-            border: 1px solid rgba(255, 107, 0, 0.3);
-            border-radius: 20px;
-            padding: 40px;
-            max-width: 600px;
-            width: 100%;
-            text-align: center;
-            box-shadow: 0 20px 60px rgba(255, 107, 0, 0.2);
-        }}
-
-        .logo {{
-            font-size: 32px;
-            font-weight: 700;
-            background: linear-gradient(135deg, #ff6b00 0%, #ff3d00 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 30px;
-        }}
-
-        .song-cover {{
-            width: 250px;
-            height: 250px;
-            border-radius: 16px;
-            margin: 0 auto 24px;
-            box-shadow: 0 16px 48px rgba(0,0,0,0.6);
-            border: 2px solid rgba(255, 107, 0, 0.3);
-            object-fit: cover;
-            background: linear-gradient(135deg, #ff6b00, #ff3d00);
-            animation: pulse 2s infinite;
-        }}
-
-        @keyframes pulse {{
-            0%, 100% {{ opacity: 1; transform: scale(1); }}
-            50% {{ opacity: 0.8; transform: scale(0.98); }}
-        }}
-
-        .song-title {{
-            font-size: 28px;
-            font-weight: 700;
-            margin-bottom: 8px;
-            background: linear-gradient(135deg, #fff 0%, #b3b3b3 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }}
-
-        .song-artist {{
-            font-size: 18px;
-            color: #b3b3b3;
-            margin-bottom: 16px;
-        }}
-
-        .loading {{
-            font-size: 16px;
-            color: #ff6b00;
-            margin: 20px 0;
-            animation: blink 1s infinite;
-        }}
-
-        @keyframes blink {{
-            0%, 50% {{ opacity: 1; }}
-            51%, 100% {{ opacity: 0.5; }}
-        }}
-
-        .controls {{
-            margin-top: 30px;
-        }}
-
-        .control-btn {{
-            background: linear-gradient(135deg, #ff6b00 0%, #ff3d00 100%);
-            color: #fff;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 24px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            margin: 8px;
-            transition: all 0.3s;
-            text-decoration: none;
-            display: inline-block;
-            box-shadow: 0 4px 16px rgba(255, 107, 0, 0.3);
-        }}
-
-        .control-btn:hover {{
-            transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(255, 107, 0, 0.5);
-        }}
-
-        .secondary-btn {{
-            background: linear-gradient(135deg, #5865F2 0%, #4752C4 100%);
-            box-shadow: 0 4px 16px rgba(88, 101, 242, 0.3);
-        }}
-
-        .secondary-btn:hover {{
-            box-shadow: 0 8px 24px rgba(88, 101, 242, 0.5);
-        }}
-    </style>
+    <style>body{{display:none}}</style>
 </head>
 <body>
-    <div class="player-container">
-        <div class="logo">PLANETIFY</div>
-
-        <img src="{share_url}/cover" alt="{song['title']}" class="song-cover"
-             onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 250 250%22%3E%3Crect fill=%22%23ff6b00%22 width=%22250%22 height=%22250%22 rx=%2216%22/%3E%3Ctext x=%22125%22 y=%22125%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22white%22 font-size=%2280%22%3E🎵%3C/text%3E%3C/svg%3E'">
-
-        <h1 class="song-title">{song['title']}</h1>
-        <div class="song-artist">von {song['artist']}</div>
-
-        <div class="loading">🎵 Song wird geladen...</div>
-
-        <audio id="songPlayer" autoplay preload="metadata">
-            <source src="/stream/{song['filename']}" type="audio/mpeg">
-            Dein Browser unterstützt kein Audio.
-        </audio>
-
-        <div class="controls">
-            <a href="/" class="control-btn">🎧 Mehr Songs auf Planetify</a>
-            <button class="control-btn secondary-btn" onclick="window.open('{share_url}/preview.mp3', '_blank')">🎵 Nur Hörprobe anhören</button>
-        </div>
-    </div>
-
+    <!-- Discord lädt nur die Metadaten - keine sichtbare Seite -->
     <script>
-        const audio = document.getElementById('songPlayer');
-        const loading = document.querySelector('.loading');
-
-        // Automatische Wiedergabe
-        audio.addEventListener('canplay', () => {{
-            loading.textContent = '▶️ Song wird abgespielt...';
-            audio.play().catch(e => {{
-                console.log('Autoplay failed:', e);
-                loading.textContent = '⚠️ Klicke auf Play um zu hören';
-                // Fallback: Zeige Play-Button
-                const playBtn = document.createElement('button');
-                playBtn.className = 'control-btn';
-                playBtn.innerHTML = '▶️ Play';
-                playBtn.onclick = () => {{
-                    audio.play();
-                    loading.textContent = '▶️ Song wird abgespielt...';
-                    playBtn.remove();
-                }};
-                document.querySelector('.controls').prepend(playBtn);
-            }});
-        }});
-
-        audio.addEventListener('play', () => {{
-            loading.textContent = '▶️ Song wird abgespielt...';
-        }});
-
-        audio.addEventListener('ended', () => {{
-            loading.textContent = '✅ Song beendet - Entdecke mehr auf Planetify!';
-        }});
-
-        // Discord Metadaten werden automatisch geladen
+        // Weiterleitung falls jemand direkt zugreift
+        window.location.href = '/';
     </script>
 </body>
 </html>"""
