@@ -1,4 +1,5 @@
 Flask
+Flask-Babel
 pypresence
 mutagen
 Flask-SocketIO

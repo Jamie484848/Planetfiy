@@ -1,0 +1,170 @@
+# English translations for Planetify
+# Copyright (C) 2025
+# This file is distributed under the same license as the Planetify package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Planetify\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-12-29 22:17+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: English <LL@li.org>\n"
+"Language: en\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Your Music"
+msgstr "Your Music"
+
+msgid "Upload Songs"
+msgstr "Upload Songs"
+
+msgid "Add from URL"
+msgstr "Add from URL"
+
+msgid "No songs yet"
+msgstr "No songs yet"
+
+msgid "Click here or drag files in"
+msgstr "Click here or drag files in"
+
+msgid "Supported: MP3, WAV, OGG, FLAC, M4A"
+msgstr "Supported: MP3, WAV, OGG, FLAC, M4A"
+
+msgid "Cancel"
+msgstr "Cancel"
+
+msgid "Add Song from URL"
+msgstr "Add Song from URL"
+
+msgid "Add a link from YouTube, Spotify or SoundCloud to automatically download the song!"
+msgstr "Add a link from YouTube, Spotify or SoundCloud to automatically download the song!"
+
+msgid "Enter URL"
+msgstr "Enter URL"
+
+msgid "Supported: YouTube, YouTube Music, Spotify, SoundCloud"
+msgstr "Supported: YouTube, YouTube Music, Spotify, SoundCloud"
+
+msgid "⏳ Downloading..."
+msgstr "⏳ Downloading..."
+
+msgid "🔗 Add Song"
+msgstr "🔗 Add Song"
+
+msgid "Start"
+msgstr "Start"
+
+msgid "Your Music Library"
+msgstr "Your Music Library"
+
+msgid "Search"
+msgstr "Search"
+
+msgid "Scan Metadata"
+msgstr "Scan Metadata"
+
+msgid "Not available"
+msgstr "Not available"
+
+msgid "Create Session"
+msgstr "Create Session"
+
+msgid "Not connected"
+msgstr "Not connected"
+
+msgid "Welcome back!"
+msgstr "Welcome back!"
+
+msgid "Choose a song"
+msgstr "Choose a song"
+
+msgid "Artist"
+msgstr "Artist"
+
+msgid "Create Listening Session"
+msgstr "Create Listening Session"
+
+msgid "Create Session"
+msgstr "Create Session"
+
+msgid "Join Session"
+msgstr "Join Session"
+
+msgid "You have been invited to join a Listening Session."
+msgstr "You have been invited to join a Listening Session."
+
+msgid "Are you sure you want to join?"
+msgstr "Are you sure you want to join?"
+
+msgid "The host controls playback for all participants."
+msgstr "The host controls playback for all participants."
+
+msgid "No"
+msgstr "No"
+
+msgid "Yes, join"
+msgstr "Yes, join"
+
+msgid "Edit Song"
+msgstr "Edit Song"
+
+msgid "Title"
+msgstr "Title"
+
+msgid "Song Title"
+msgstr "Song Title"
+
+msgid "Artist Name"
+msgstr "Artist Name"
+
+msgid "Album Name"
+msgstr "Album Name"
+
+msgid "Delete"
+msgstr "Delete"
+
+msgid "Save"
+msgstr "Save"
+
+msgid "Share Song"
+msgstr "Share Song"
+
+msgid "Share this song link on social media or with friends."
+msgstr "Share this song link on social media or with friends."
+
+msgid "Close"
+msgstr "Close"
+
+msgid "Open Link"
+msgstr "Open Link"
+
+msgid "Planetify"
+msgstr "Planetify"
+
+msgid "The session has been closed by the host."
+msgstr "The session has been closed by the host."
+
+msgid "Upload your first MP3s!"
+msgstr "Upload your first MP3s!"
+
+msgid "Error:"
+msgstr "Error:"
+
+msgid "song(s) uploaded successfully!"
+msgstr "song(s) uploaded successfully!"
+
+msgid "Upload error. See console for details."
+msgstr "Upload error. See console for details."
+
+msgid "Please enter a URL!"
+msgstr "Please enter a URL!"
+
+msgid "Delete"
+msgstr "Delete"
+
+msgid "Really delete song?"
+msgstr "Really delete song?"
