@@ -1596,6 +1596,20 @@ HTML_TEMPLATE = """
             gap: 8px;
         }
 
+        .discord-embed-audio {
+            margin-top: 12px;
+        }
+
+        .discord-audio-preview {
+            background: rgba(88, 101, 242, 0.1);
+            border: 1px solid rgba(88, 101, 242, 0.3);
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 12px;
+            color: #5865f2;
+            display: inline-block;
+        }
+
         ::-webkit-scrollbar {
             width: 12px;
         }
@@ -1841,6 +1855,11 @@ HTML_TEMPLATE = """
                             <div class="discord-embed-content">
                                 <div class="discord-embed-title" id="embedTitle">Loading...</div>
                                 <div class="discord-embed-description" id="embedDescription">Loading...</div>
+                <div class="discord-embed-audio" id="embedAudio">
+                    <div class="discord-audio-preview">
+                        🎵 <span id="embedAudioText">30s Hörprobe verfügbar</span>
+                    </div>
+                </div>
                                 <div class="discord-embed-image" id="embedImage">
                                     <div class="discord-embed-image-placeholder">🎵</div>
                                 </div>
@@ -1871,7 +1890,7 @@ HTML_TEMPLATE = """
     </div>
 
     <script>
-        const BASE_URL = "{BASE_URL}";
+        const BASE_URL = "{{ BASE_URL }}";
         const audioPlayer = document.getElementById('audioPlayer');
         let playlist = [];
         let currentTrackIndex = -1;
@@ -2561,6 +2580,7 @@ HTML_TEMPLATE = """
             document.getElementById('embedTitle').textContent = song.title;
             document.getElementById('embedDescription').textContent = `🎵 ${song.artist}${song.album ? ` • ${song.album}` : ''}`;
             document.getElementById('embedDuration').textContent = formatTime(song.duration);
+            document.getElementById('embedAudioText').textContent = '30s Hörprobe verfügbar';
             document.getElementById('shareLink').value = shareUrl;
 
             // Setze Cover-Bild
@@ -2581,7 +2601,7 @@ HTML_TEMPLATE = """
         function quickDelete(index) {
             const song = playlist[index];
             if (!confirm(`"${song.title}" wirklich löschen?`)) return;
-
+            
             fetch('/delete_song', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -2705,7 +2725,7 @@ HTML_TEMPLATE = """
 
 @app.route('/')
 def index():
-    return render_template_string(HTML_TEMPLATE)
+    return render_template_string(HTML_TEMPLATE, BASE_URL=BASE_URL)
 
 @app.route('/playlist')
 def get_playlist():
@@ -2938,18 +2958,87 @@ def pause():
 def update_time():
     data = request.get_json()
     player_state['current_time'] = data['time']
-
+    
     if 'is_playing' in data:
         old_state = player_state['is_playing']
         player_state['is_playing'] = data['is_playing']
-
+        
         if old_state != player_state['is_playing']:
             update_discord_presence()
-
+    
     if 'duration' in data and player_state['current_track_index'] >= 0:
         playlist[player_state['current_track_index']]['duration'] = data['duration']
-
+    
     return jsonify({'success': True})
+
+@app.route('/share/<int:song_id>/preview.mp3')
+def share_song_preview(song_id):
+    """Erstellt eine 30-Sekunden Audio-Vorschau für Discord"""
+    global playlist
+    if playlist is None:
+        playlist = load_songs_db()
+
+    song = next((s for s in playlist if s['id'] == song_id), None)
+    if not song:
+        return "Song nicht gefunden", 404
+
+    try:
+        import subprocess
+        import tempfile
+        import os
+
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], song['filename'])
+        if not os.path.exists(filepath):
+            return "Datei nicht gefunden", 404
+
+        # Erstelle eine 30-Sekunden Vorschau mit ffmpeg
+        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
+            temp_path = temp_file.name
+
+        try:
+            # Verwende ffmpeg um eine 30-Sekunden Vorschau zu erstellen
+            cmd = [
+                'ffmpeg', '-i', filepath,  # Input file
+                '-ss', '0',                # Start at beginning
+                '-t', '30',                # Duration: 30 seconds
+                '-c', 'copy',              # Copy codec (fast)
+                '-y',                      # Overwrite output
+                temp_path                   # Output file
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+            if result.returncode != 0:
+                print(f"FFmpeg error: {result.stderr}")
+                # Fallback: Gib die ersten 30 Sekunden direkt zurück (langsamer aber funktioniert)
+                return send_from_directory(app.config['UPLOAD_FOLDER'], song['filename'],
+                                         mimetype='audio/mpeg')
+
+            # Gib die Vorschau-Datei zurück
+            with open(temp_path, 'rb') as f:
+                data = f.read()
+
+            # Cleanup
+            os.unlink(temp_path)
+
+            return Response(data, mimetype='audio/mpeg')
+
+        except subprocess.TimeoutExpired:
+            os.unlink(temp_path)
+            return "Timeout bei Vorschau-Erstellung", 500
+        except Exception as e:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            print(f"Preview error: {e}")
+            # Fallback zur Original-Datei
+            return send_from_directory(app.config['UPLOAD_FOLDER'], song['filename'],
+                                     mimetype='audio/mpeg')
+
+    except Exception as e:
+        print(f"Preview generation failed: {e}")
+        # Fallback: Gib die ersten 30 Sekunden der Original-Datei zurück
+        return send_from_directory(app.config['UPLOAD_FOLDER'], song['filename'],
+                                 mimetype='audio/mpeg')
 
 @app.route('/share/<int:song_id>/cover')
 def share_song_cover(song_id):
@@ -3123,23 +3212,32 @@ def share_song(song_id):
     <meta property="og:type" content="music.song">
     <meta property="og:site_name" content="Planetify">
     <meta property="og:title" content="{song['title']}">
-    <meta property="og:description" content="🎵 {song['artist']}{f" • {song['album']}" if song['album'] else ""} • {song['duration']//60}:{song['duration']%60:02d}">
+    <meta property="og:description" content="🎵 {song['artist']}{f" • {song['album']}" if song['album'] else ""} • {song['duration']//60}:{song['duration']%60:02d} • Höre jetzt auf Planetify!">
     <meta property="og:url" content="{share_url}">
     <meta property="og:image" content="{share_url}/cover">
     <meta property="og:image:width" content="512">
     <meta property="og:image:height" content="512">
     <meta property="og:image:type" content="image/jpeg">
+    <meta property="og:image:alt" content="Album cover for {song['title']} by {song['artist']}">
+
+    <!-- Audio preview (30 second clip) -->
+    <meta property="og:audio" content="{share_url}/preview.mp3">
+    <meta property="og:audio:secure_url" content="{share_url}/preview.mp3">
+    <meta property="og:audio:type" content="audio/mpeg">
 
     <!-- Music specific Open Graph tags -->
     <meta property="music:musician" content="{song['artist']}">
     <meta property="music:album" content="{song.get('album', '') or ''}">
     <meta property="music:song" content="{song['title']}">
+    <meta property="music:duration" content="{song['duration']}">
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:site" content="@planetify">
     <meta name="twitter:title" content="{song['title']}">
-    <meta name="twitter:description" content="🎵 {song['artist']}{f" • {song['album']}" if song['album'] else ""} | Planetify">
+    <meta name="twitter:description" content="🎵 {song['artist']}{f" • {song['album']}" if song['album'] else ""} | Höre die Vorschau auf Planetify!">
+    <meta name="twitter:image" content="{share_url}/cover">
+    <meta name="twitter:image:alt" content="Album cover for {song['title']} by {song['artist']}">
     <meta name="twitter:image" content="{share_url}/cover">
 
     <!-- Additional Discord specific meta tags -->
@@ -3283,6 +3381,48 @@ def share_song(song_id):
             font-size: 16px;
         }}
 
+        .preview-section {{
+            background: linear-gradient(135deg, rgba(255, 107, 0, 0.1), rgba(255, 61, 0, 0.05));
+            border: 1px solid rgba(255, 107, 0, 0.3);
+            border-radius: 12px;
+            padding: 16px;
+            margin: 16px 0;
+            text-align: center;
+        }}
+
+        .preview-section h4 {{
+            color: #fff;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }}
+
+        .preview-player {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            margin-top: 12px;
+        }}
+
+        .preview-btn {{
+            background: linear-gradient(135deg, #ff6b00, #ff3d00);
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }}
+
+        .preview-btn:hover {{
+            transform: scale(1.05);
+        }}
+
         .pulse-animation {{
             animation: pulse 2s infinite;
         }}
@@ -3304,26 +3444,71 @@ def share_song(song_id):
         <div class="song-artist">von {song['artist']}</div>
         {f'<div class="song-album">{song["album"]}</div>' if song['album'] else ""}
 
-        <div class="share-actions">
-            <button class="share-btn" onclick="shareOnDiscord()">
-                📱 In Discord teilen
-            </button>
-            <a href="/" class="share-btn listen-btn">
-                🎧 Jetzt anhören
-            </a>
-        </div>
+            <div class="share-actions">
+                <button class="share-btn" onclick="shareOnDiscord()">
+                    📱 In Discord teilen
+                </button>
+                <a href="/" class="share-btn listen-btn">
+                    🎧 Jetzt anhören
+                </a>
+            </div>
 
-        <div class="share-info">
-            <h3>🎉 Geteilter Song!</h3>
-            <p>Dieser Link zeigt in Discord ein cooles animiertes Embed mit Cover, Titel und Artist an. Teile deine Lieblingssongs mit deinen Freunden!</p>
-        </div>
+            <div class="preview-section">
+                <h4>🎵 Höre eine Vorschau!</h4>
+                <div class="preview-player">
+                    <button class="preview-btn" onclick="togglePreview()" id="previewBtn">
+                        <span id="previewIcon">▶️</span>
+                        30s Vorschau
+                    </button>
+                </div>
+                <audio id="previewAudio" style="display: none;" onended="onPreviewEnded()">
+                    <source src="/share/{song_id}/preview.mp3" type="audio/mpeg">
+                </audio>
+            </div>
+
+            <div class="share-info">
+                <h3>🎉 Geteilter Song!</h3>
+                <p>Dieser Link zeigt in Discord ein cooles animiertes Embed mit Cover, Titel, Artist und einer 30-Sekunden Hörprobe! Teile deine Lieblingssongs mit deinen Freunden!</p>
+            </div>
     </div>
 
     <script>
+        let previewPlaying = false;
+
+        function togglePreview() {{
+            const audio = document.getElementById('previewAudio');
+            const btn = document.getElementById('previewBtn');
+            const icon = document.getElementById('previewIcon');
+
+            if (previewPlaying) {{
+                audio.pause();
+                audio.currentTime = 0;
+                icon.textContent = '▶️';
+                btn.innerHTML = '<span id="previewIcon">▶️</span> 30s Vorschau';
+                previewPlaying = false;
+            }} else {{
+                audio.play().catch(e => {{
+                    console.log('Preview play error:', e);
+                    alert('Vorschau konnte nicht geladen werden. Versuche es später nochmal.');
+                }});
+                icon.textContent = '⏸️';
+                btn.innerHTML = '<span id="previewIcon">⏸️</span> Wiedergabe läuft...';
+                previewPlaying = true;
+            }}
+        }}
+
+        function onPreviewEnded() {{
+            const btn = document.getElementById('previewBtn');
+            const icon = document.getElementById('previewIcon');
+            icon.textContent = '▶️';
+            btn.innerHTML = '<span id="previewIcon">▶️</span> 30s Vorschau';
+            previewPlaying = false;
+        }}
+
         function shareOnDiscord() {{
             // Kopiere Link in Zwischenablage
             navigator.clipboard.writeText(window.location.href).then(() => {{
-                alert('✅ Link kopiert! Füge ihn in Discord ein für ein cooles Embed.');
+                alert('✅ Link kopiert! Füge ihn in Discord ein für ein cooles Embed mit Hörprobe.');
             }}).catch(() => {{
                 // Fallback für ältere Browser
                 const textArea = document.createElement('textarea');
@@ -3332,7 +3517,7 @@ def share_song(song_id):
                 textArea.select();
                 document.execCommand('copy');
                 document.body.removeChild(textArea);
-                alert('✅ Link kopiert! Füge ihn in Discord ein für ein cooles Embed.');
+                alert('✅ Link kopiert! Füge ihn in Discord ein für ein cooles Embed mit Hörprobe.');
             }});
         }}
 
