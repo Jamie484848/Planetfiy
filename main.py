@@ -1839,7 +1839,7 @@ HTML_TEMPLATE = """
         <div class="modal-content" style="max-width: 700px;">
             <div class="modal-header">🎉 Song teilen</div>
             <p style="color: #b3b3b3; margin-bottom: 24px; text-align: center;">
-                Teile diesen Song in Discord mit einem coolen animierten Embed!
+                Teile diesen Song-Link in sozialen Medien oder mit Freunden. Er enthält alle wichtigen Informationen und eine Hörprobe.
             </p>
 
             <!-- Discord Embed Preview -->
@@ -1849,12 +1849,12 @@ HTML_TEMPLATE = """
                         <div class="discord-avatar-inner">👤</div>
                     </div>
                     <div class="discord-message-content">
-                        <div class="discord-username">Dein Name</div>
+                        <div class="discord-username">Max Mustermann</div>
                         <div class="discord-embed">
                             <div class="discord-embed-color"></div>
                             <div class="discord-embed-content">
-                                <div class="discord-embed-title" id="embedTitle">Loading...</div>
-                                <div class="discord-embed-description" id="embedDescription">Loading...</div>
+                                <div class="discord-embed-title" id="embedTitle">Songtitel wird geladen...</div>
+                                <div class="discord-embed-description" id="embedDescription">Artist • Album</div>
                 <div class="discord-embed-audio" id="embedAudio">
                     <div class="discord-audio-preview">
                         🎵 <span id="embedAudioText">30s Hörprobe verfügbar</span>
@@ -2580,7 +2580,7 @@ HTML_TEMPLATE = """
             document.getElementById('embedTitle').textContent = song.title;
             document.getElementById('embedDescription').textContent = `🎵 ${song.artist}${song.album ? ` • ${song.album}` : ''}`;
             document.getElementById('embedDuration').textContent = formatTime(song.duration);
-            document.getElementById('embedAudioText').textContent = '30s Hörprobe verfügbar';
+            document.getElementById('embedAudioText').textContent = '30-Sekunden Hörprobe verfügbar';
             document.getElementById('shareLink').value = shareUrl;
 
             // Setze Cover-Bild
@@ -3212,7 +3212,7 @@ def share_song(song_id):
     <meta property="og:type" content="music.song">
     <meta property="og:site_name" content="Planetify">
     <meta property="og:title" content="{song['title']}">
-    <meta property="og:description" content="🎵 {song['artist']}{f" • {song['album']}" if song['album'] else ""} • {song['duration']//60}:{song['duration']%60:02d} • Höre jetzt auf Planetify!">
+    <meta property="og:description" content="🎵 {song['artist']}{f" • {song['album']}" if song['album'] else ""} • {song['duration']//60}:{song['duration']%60:02d} • Jetzt auf Planetify anhören">
     <meta property="og:url" content="{share_url}">
     <meta property="og:image" content="{share_url}/cover">
     <meta property="og:image:width" content="512">
@@ -3235,7 +3235,7 @@ def share_song(song_id):
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:site" content="@planetify">
     <meta name="twitter:title" content="{song['title']}">
-    <meta name="twitter:description" content="🎵 {song['artist']}{f" • {song['album']}" if song['album'] else ""} | Höre die Vorschau auf Planetify!">
+    <meta name="twitter:description" content="🎵 {song['artist']}{f" • {song['album']}" if song['album'] else ""} | Höre die Vorschau auf Planetify">
     <meta name="twitter:image" content="{share_url}/cover">
     <meta name="twitter:image:alt" content="Album cover for {song['title']} by {song['artist']}">
     <meta name="twitter:image" content="{share_url}/cover">
@@ -3449,16 +3449,17 @@ def share_song(song_id):
                     📱 In Discord teilen
                 </button>
                 <a href="/" class="share-btn listen-btn">
-                    🎧 Jetzt anhören
+                    🎧 Auf Planetify hören
                 </a>
             </div>
 
             <div class="preview-section">
-                <h4>🎵 Höre eine Vorschau!</h4>
+                <h4>🎵 Hörprobe anhören</h4>
+                <p style="font-size: 13px; color: #b3b3b3; margin-bottom: 12px;">30 Sekunden Vorschau des Songs</p>
                 <div class="preview-player">
                     <button class="preview-btn" onclick="togglePreview()" id="previewBtn">
                         <span id="previewIcon">▶️</span>
-                        30s Vorschau
+                        Vorschau abspielen
                     </button>
                 </div>
                 <audio id="previewAudio" style="display: none;" onended="onPreviewEnded()">
@@ -3467,8 +3468,8 @@ def share_song(song_id):
             </div>
 
             <div class="share-info">
-                <h3>🎉 Geteilter Song!</h3>
-                <p>Dieser Link zeigt in Discord ein cooles animiertes Embed mit Cover, Titel, Artist und einer 30-Sekunden Hörprobe! Teile deine Lieblingssongs mit deinen Freunden!</p>
+                <h3>🎉 Song teilen</h3>
+                <p>Teile diesen Song-Link in Discord oder anderen sozialen Medien. Der Link zeigt ein ansprechendes Embed mit Album-Cover, Song-Informationen und einer Hörprobe an.</p>
             </div>
     </div>
 
@@ -3484,7 +3485,7 @@ def share_song(song_id):
                 audio.pause();
                 audio.currentTime = 0;
                 icon.textContent = '▶️';
-                btn.innerHTML = '<span id="previewIcon">▶️</span> 30s Vorschau';
+                btn.innerHTML = '<span id="previewIcon">▶️</span> Vorschau abspielen';
                 previewPlaying = false;
             }} else {{
                 audio.play().catch(e => {{
@@ -3508,7 +3509,7 @@ def share_song(song_id):
         function shareOnDiscord() {{
             // Kopiere Link in Zwischenablage
             navigator.clipboard.writeText(window.location.href).then(() => {{
-                alert('✅ Link kopiert! Füge ihn in Discord ein für ein cooles Embed mit Hörprobe.');
+                alert('✅ Link kopiert! Teile ihn jetzt in Discord oder anderen sozialen Medien.');
             }}).catch(() => {{
                 // Fallback für ältere Browser
                 const textArea = document.createElement('textarea');
@@ -3517,7 +3518,7 @@ def share_song(song_id):
                 textArea.select();
                 document.execCommand('copy');
                 document.body.removeChild(textArea);
-                alert('✅ Link kopiert! Füge ihn in Discord ein für ein cooles Embed mit Hörprobe.');
+                alert('✅ Link kopiert! Teile ihn jetzt in Discord oder anderen sozialen Medien.');
             }});
         }}
 
