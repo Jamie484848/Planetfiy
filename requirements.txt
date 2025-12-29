@@ -7,3 +7,5 @@ Werkzeug
 python-engineio
 python-socketio
 eventlet
+yt-dlp
+spotdl

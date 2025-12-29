@@ -2,7 +2,7 @@ import os
 import time
 import json
 import secrets
-from flask import Flask, render_template_string, jsonify, request, send_from_directory
+from flask import Flask, render_template_string, jsonify, request, send_from_directory, Response
 from pypresence import Presence
 import threading
 from werkzeug.utils import secure_filename
@@ -19,15 +19,35 @@ try:
     MUTAGEN_AVAILABLE = True
 except ImportError:
     MUTAGEN_AVAILABLE = False
-    print("⚠️ mutagen nicht installiert. Metadaten-Erkennung deaktiviert.")
+    print("WARNUNG: mutagen nicht installiert. Metadaten-Erkennung deaktiviert.")
     print("   Installiere mit: pip install mutagen")
 
 from flask_cors import CORS
+
+# Neue Imports für URL-Downloads
+try:
+    import yt_dlp
+    YTDLP_AVAILABLE = True
+except ImportError:
+    YTDLP_AVAILABLE = False
+    print("WARNUNG: yt-dlp nicht installiert. URL-Downloads deaktiviert.")
+    print("   Installiere mit: pip install yt-dlp")
+
+try:
+    import spotdl
+    SPOTDL_AVAILABLE = True
+except ImportError:
+    SPOTDL_AVAILABLE = False
+    print("WARNUNG: spotdl nicht installiert. Spotify-Downloads deaktiviert.")
+    print("   Installiere mit: pip install spotdl")
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = secrets.token_hex(16)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Base URL für öffentliche Links (ändere dies für lokale Entwicklung)
+BASE_URL = os.environ.get('BASE_URL', 'https://planetfiy.onrender.com')
 
 # Config
 UPLOAD_FOLDER = 'music_library'
@@ -42,13 +62,14 @@ if not os.path.exists(UPLOAD_FOLDER):
 CLIENT_ID = "1449141822407315662"
 
 # Songs Database
-SONGS_DB = 'songs_db.json'
+SONGS_DB = os.path.join(os.path.dirname(__file__), 'songs_db.json')
 
 # Listening Sessions
 listening_sessions = {}
 # Format: { 'session_id': { 'host': user_id, 'users': [user_ids], 'state': {...} } }
 
 def load_songs_db():
+    """Einfache und robuste Funktion zum Laden der Songs-Datenbank"""
     if os.path.exists(SONGS_DB):
         with open(SONGS_DB, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -58,7 +79,8 @@ def save_songs_db(songs):
     with open(SONGS_DB, 'w', encoding='utf-8') as f:
         json.dump(songs, f, ensure_ascii=False, indent=2)
 
-playlist = load_songs_db()
+# Playlist wird lazy geladen
+playlist = None
 
 player_state = {
     "current_track_index": -1,
@@ -138,7 +160,7 @@ def extract_metadata(filepath):
         if hasattr(audio.info, 'length'):
             duration = int(audio.info.length)
         
-        print(f"📀 Metadaten geladen: {title} - {artist} ({duration}s)")
+        print(f"Metadaten geladen: {title} - {artist} ({duration}s)")
         
         return {
             'title': str(title),
@@ -148,7 +170,7 @@ def extract_metadata(filepath):
         }
         
     except Exception as e:
-        print(f"⚠️ Metadaten-Fehler für {filepath}: {e}")
+        print(f"WARNUNG: Metadaten-Fehler für {filepath}: {e}")
         filename = os.path.basename(filepath)
         title = os.path.splitext(filename)[0]
         return {
@@ -168,15 +190,328 @@ def get_audio_duration_fallback(filepath):
 def get_audio_duration(filepath):
     return get_audio_duration_fallback(filepath)
 
+def clean_print(text):
+    """Entfernt Emojis aus Text für Windows-Kompatibilität"""
+    import re
+    # Entfernt alle Unicode-Emojis
+    emoji_pattern = re.compile("["
+                              u"\U0001F600-\U0001F64F"  # emoticons
+                              u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+                              u"\U0001F680-\U0001F6FF"  # transport & map symbols
+                              u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
+                              u"\U00002700-\U000027BF"  # dingbats
+                              u"\U0001f926-\U0001f937"  # gestures
+                              u"\U00010000-\U0010ffff"  # other unicode
+                              u"\u2640-\u2642"  # gender symbols
+                              u"\u2600-\u2B55"  # misc symbols
+                              u"\u200d"  # zero width joiner
+                              u"\u23cf"  # eject symbol
+                              u"\u23e9"  # fast forward
+                              u"\u231a"  # watch
+                              u"\ufe0f"  # variation selector
+                              u"\u3030"  # wavy dash
+                              "]+", flags=re.UNICODE)
+    return emoji_pattern.sub('', text)
+
+def embed_cover_and_metadata(filepath, metadata, cover_url=None):
+    """Bettet Cover und Metadaten in MP3-Datei ein"""
+    try:
+        import requests
+        import re
+        from mutagen.mp3 import MP3
+        from mutagen.id3 import ID3, APIC, TIT2, TPE1, TALB
+
+        audio = MP3(filepath, ID3=ID3)
+
+        # Erstelle Tags falls keine vorhanden
+        if audio.tags is None:
+            audio.add_tags()
+            tags_created = True
+        else:
+            tags_created = False
+
+        # Cover nur hinzufügen wenn keins vorhanden ist oder URL angegeben
+        has_cover = any('APIC' in str(key) for key in audio.tags.keys())
+        if cover_url and not has_cover:
+            try:
+                print(f" Lade Cover herunter: {cover_url}")
+                response = requests.get(cover_url, timeout=30)
+                if response.status_code == 200:
+                    cover_data = response.content
+
+                    audio.tags.add(
+                        APIC(
+                            encoding=3,  # UTF-8
+                            mime='image/jpeg',
+                            type=3,  # Cover (front)
+                            desc='Cover',
+                            data=cover_data
+                        )
+                    )
+                    print(" Cover eingebettet")
+            except Exception as cover_error:
+                print(f" Cover-Download fehlgeschlagen: {cover_error}")
+
+        # Metadaten nur hinzufügen wenn Tags neu erstellt wurden
+        if tags_created:
+            if metadata.get('title'):
+                audio.tags.add(TIT2(encoding=3, text=metadata['title']))
+            if metadata.get('artist'):
+                audio.tags.add(TPE1(encoding=3, text=metadata['artist']))
+            if metadata.get('album'):
+                audio.tags.add(TALB(encoding=3, text=metadata['album']))
+
+            audio.save()
+            print(" Metadaten gespeichert")
+        else:
+            print("ℹ Tags bereits vorhanden, überspringe Metadaten-Update")
+
+    except Exception as e:
+        print(f" Fehler beim Einbetten von Cover/Metadaten: {e}")
+
+def download_from_url(url):
+    """Lädt Audio von YouTube/Spotify/etc. herunter und gibt den Dateipfad zurück"""
+    try:
+        # Überprüfen ob es eine Spotify-URL ist
+        if 'spotify.com' in url and SPOTDL_AVAILABLE:
+            return download_from_spotify(url)
+        elif YTDLP_AVAILABLE:
+            return download_from_youtube(url)
+        else:
+            raise Exception("Keine geeignete Download-Bibliothek verfügbar")
+
+    except Exception as e:
+        print(f" Download-Fehler für {url}: {e}")
+        raise Exception(f"Download fehlgeschlagen: {str(e)}")
+
+def download_from_spotify(url):
+    """Lädt Audio von Spotify mit spotdl herunter"""
+    try:
+        import subprocess
+        import tempfile
+        import shutil
+        import sys
+        import requests
+        from mutagen.mp3 import MP3
+        from mutagen.id3 import ID3, APIC, TIT2, TPE1, TALB
+
+        print(f" Lade von Spotify herunter: {url}")
+
+        # Temporäres Verzeichnis für den Download
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # spotdl über python -m ausführen
+            cmd = [
+                sys.executable, '-m', 'spotdl', url,
+                '--output', temp_dir,
+                '--format', 'mp3',
+                '--bitrate', '320k',
+                '--threads', '1'
+            ]
+
+            print(f" Führe aus: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)  # 10 Minuten Timeout
+
+            if result.returncode != 0:
+                print(f" spotdl stderr: {result.stderr}")
+                print(f" spotdl stdout: {result.stdout}")
+                raise Exception(f"spotdl Download fehlgeschlagen: {result.stderr}")
+
+            # Gefundene Dateien suchen
+            downloaded_files = []
+            for file in os.listdir(temp_dir):
+                if file.endswith('.mp3'):
+                    downloaded_files.append(os.path.join(temp_dir, file))
+
+            if not downloaded_files:
+                print(f" Inhalt von temp_dir: {os.listdir(temp_dir)}")
+                raise Exception("Keine MP3-Datei wurde heruntergeladen")
+
+            # Erste gefundene MP3-Datei verwenden
+            temp_filepath = downloaded_files[0]
+
+            # Metadaten aus der Datei extrahieren
+            file_metadata = extract_metadata(temp_filepath)
+
+            # Metadaten vorbereiten
+            metadata = {
+                'title': file_metadata['title'],
+                'artist': file_metadata['artist'],
+                'album': file_metadata['album'],
+                'duration': file_metadata['duration']
+            }
+
+            # Versuche ein Cover für den Song zu finden
+            cover_url = find_cover_for_song(metadata['title'], metadata['artist'])
+
+            # Cover und Metadaten einbetten
+            embed_cover_and_metadata(temp_filepath, metadata, cover_url)
+
+            # Dateiname für die finale Datei erstellen
+            safe_title = "".join(c for c in metadata['title'] if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            if not safe_title:
+                safe_title = f"spotify_{int(time.time())}"
+
+            filename = f"{safe_title}.mp3"
+            final_filepath = os.path.join(UPLOAD_FOLDER, filename)
+
+            # Sicherstellen dass Dateiname eindeutig ist
+            counter = 1
+            base_name = filename
+            while os.path.exists(final_filepath):
+                name, ext = os.path.splitext(base_name)
+                filename = f"{name}_{counter}{ext}"
+                final_filepath = os.path.join(UPLOAD_FOLDER, filename)
+                counter += 1
+
+            # Datei in das Musik-Verzeichnis kopieren
+            shutil.copy2(temp_filepath, final_filepath)
+
+            print(f" Spotify Download abgeschlossen: {filename}")
+            return final_filepath, metadata
+
+    except subprocess.TimeoutExpired:
+        raise Exception("Download-Zeitüberschreitung (10 Minuten)")
+    except Exception as e:
+        print(f" Spotify Download-Fehler: {e}")
+        raise
+
+def find_cover_for_song(title, artist):
+    """Sucht nach einem Cover für einen Song basierend auf Titel und Artist"""
+    try:
+        import requests
+        import re
+
+        # Erstelle Suchbegriff für YouTube
+        search_query = f"{title} {artist} official music video"
+        search_query = re.sub(r'[^\w\s]', '', search_query)  # Entferne Sonderzeichen
+
+        # YouTube Search API (kostenlos, kein API-Key nötig)
+        search_url = f"https://www.youtube.com/results?search_query={search_query.replace(' ', '+')}"
+
+        # Einfache HTML-Parsing (nicht ideal, aber funktioniert)
+        response = requests.get(search_url, timeout=10)
+        if response.status_code != 200:
+            return None
+
+        # Suche nach dem ersten Video-ID
+        video_id_match = re.search(r'watch\?v=([a-zA-Z0-9_-]{11})', response.text)
+        if video_id_match:
+            video_id = video_id_match.group(1)
+            # Hole Thumbnail
+            thumbnail_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+
+            # Teste ob Thumbnail existiert
+            thumb_response = requests.head(thumbnail_url, timeout=5)
+            if thumb_response.status_code == 200:
+                return thumbnail_url
+
+        return None
+
+    except Exception as e:
+        print(f" Cover-Suche fehlgeschlagen: {e}")
+        return None
+
+def download_from_youtube(url):
+    """Lädt Audio von YouTube/etc. mit yt-dlp herunter"""
+    try:
+        import requests
+        import re
+        from mutagen.mp3 import MP3
+        from mutagen.id3 import ID3, APIC, TIT2, TPE1, TALB
+
+        # yt-dlp Optionen für Audio-Download
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'outtmpl': os.path.join(UPLOAD_FOLDER, '%(title)s.%(ext)s'),
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+        }
+
+        print(f" Lade von YouTube herunter: {url}")
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Info extrahieren
+            info = ydl.extract_info(url, download=False)
+
+            # Sicherstellen dass es ein einzelnes Video ist
+            if 'entries' in info:
+                info = info['entries'][0]
+
+            # Titel für Dateiname bereinigen
+            title = info.get('title', 'Unknown')
+            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            if not safe_title:
+                safe_title = f"download_{int(time.time())}"
+
+            filename = f"{safe_title}.mp3"
+            filepath = os.path.join(UPLOAD_FOLDER, filename)
+
+            # Sicherstellen dass Dateiname eindeutig ist
+            counter = 1
+            base_name = filename
+            while os.path.exists(filepath):
+                name, ext = os.path.splitext(base_name)
+                filename = f"{name}_{counter}{ext}"
+                filepath = os.path.join(UPLOAD_FOLDER, filename)
+                counter += 1
+
+            # ydl_opts mit dem korrekten Dateinamen aktualisieren
+            ydl_opts['outtmpl'] = filepath.replace('.mp3', '.%(ext)s')
+
+            # Download durchführen
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl_download:
+                ydl_download.download([url])
+
+            # Metadaten vorbereiten
+            metadata = {
+                'title': info.get('title', safe_title),
+                'artist': info.get('uploader', 'Unknown Artist'),
+                'album': info.get('album', ''),
+                'duration': info.get('duration', 180)
+            }
+
+            # Versuche besseres Cover zu bekommen
+            cover_url = info.get('thumbnail')
+            if cover_url:
+                # Verwende maxresdefault für bessere Qualität
+                video_id_match = re.search(r'youtube\.com/watch\?v=([a-zA-Z0-9_-]{11})', url)
+                if video_id_match:
+                    video_id = video_id_match.group(1)
+                    maxres_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+                    # Teste ob maxres verfügbar ist
+                    try:
+                        import requests
+                        response = requests.head(maxres_url, timeout=5)
+                        if response.status_code == 200:
+                            cover_url = maxres_url
+                    except:
+                        pass  # Verwende ursprüngliches Thumbnail
+
+            # Cover und Metadaten einbetten
+            embed_cover_and_metadata(filepath, metadata, cover_url)
+
+            print(f" YouTube Download abgeschlossen: {filename}")
+            return filepath, metadata
+
+    except Exception as e:
+        print(f" YouTube Download-Fehler: {e}")
+        raise
+
 def init_discord_rpc():
     global rpc, rpc_connected
     try:
         rpc = Presence(CLIENT_ID)
         rpc.connect()
         rpc_connected = True
-        print("✅ Discord RPC verbunden!")
+        print("Discord RPC verbunden!")
     except Exception as e:
-        print(f"❌ Discord RPC Fehler: {e}")
+        print(f"Discord RPC Fehler: {e}")
         rpc_connected = False
 
 def update_discord_presence():
@@ -186,6 +521,20 @@ def update_discord_presence():
     
     try:
         current_track = playlist[player_state["current_track_index"]]
+        
+        # Erstelle automatisch eine Session-ID für "Mithören"
+        # Diese wird im listening_sessions Dictionary gespeichert
+        active_session_id = None
+        
+        # Suche nach aktiver Session oder erstelle eine neue
+        for sid, session in listening_sessions.items():
+            if len(session['users']) > 0:
+                active_session_id = sid
+                break
+        
+        # Button URLs
+        website_url = BASE_URL
+        listen_url = f"{BASE_URL}?session={active_session_id}" if active_session_id else BASE_URL
         
         if player_state["is_playing"]:
             state = f"von {current_track['artist']}"
@@ -200,25 +549,57 @@ def update_discord_presence():
             
             print(f"Discord: {current_track['title']} | {elapsed_seconds}s / {total_duration}s")
             
-            rpc.update(
-                details=details,
-                state=state,
-                start=song_start_time,
-                end=song_end_time,
-                large_image="planetify_logo",
-                large_text="Planetify",
-                small_image="play",
-                small_text="Wird abgespielt"
-            )
+            try:
+                rpc.update(
+                    details=details,
+                    state=state,
+                    start=song_start_time,
+                    end=song_end_time,
+                    large_image="planetify_logo",
+                    large_text="Planetify",
+                    small_image="play",
+                    small_text="Wird abgespielt",
+                    buttons=[
+                        {"label": "Website", "url": website_url},
+                        {"label": "Mithören", "url": listen_url}
+                    ]
+                )
+            except (TypeError, Exception) as e:
+                print(f" Discord Buttons Fehler: {e}")
+                rpc.update(
+                    details=details,
+                    state=state,
+                    start=song_start_time,
+                    end=song_end_time,
+                    large_image="planetify_logo",
+                    large_text="Planetify",
+                    small_image="play",
+                    small_text="Wird abgespielt"
+                )
         else:
-            rpc.update(
-                details=f"{current_track['title']}",
-                state=f"von {current_track['artist']} • Pausiert",
-                large_image="planetify_logo",
-                large_text="Planetify",
-                small_image="pause",
-                small_text="Pausiert"
-            )
+            try:
+                rpc.update(
+                    details=f"{current_track['title']}",
+                    state=f"von {current_track['artist']} • Pausiert",
+                    large_image="planetify_logo",
+                    large_text="Planetify",
+                    small_image="pause",
+                    small_text="Pausiert",
+                    buttons=[
+                        {"label": "Website", "url": website_url},
+                        {"label": "Mithören", "url": listen_url}
+                    ]
+                )
+            except (TypeError, Exception) as e:
+                print(f" Discord Buttons Fehler: {e}")
+                rpc.update(
+                    details=f"{current_track['title']}",
+                    state=f"von {current_track['artist']} • Pausiert",
+                    large_image="planetify_logo",
+                    large_text="Planetify",
+                    small_image="pause",
+                    small_text="Pausiert"
+                )
     except Exception as e:
         print(f"Discord Fehler: {e}")
 
@@ -240,7 +621,7 @@ def handle_create_session(data):
     
     join_room(session_id)
     emit('session_created', {'session_id': session_id, 'is_host': True})
-    print(f"📻 Session erstellt: {session_id}")
+    print(f" Session erstellt: {session_id}")
 
 @socketio.on('join_session')
 def handle_join_session(data):
@@ -271,7 +652,7 @@ def handle_join_session(data):
         'user_count': len(session['users'])
     }, room=session_id)
     
-    print(f"👤 User joined session {session_id}: {len(session['users'])} users")
+    print(f" User joined session {session_id}: {len(session['users'])} users")
 
 @socketio.on('leave_session')
 def handle_leave_session(data):
@@ -290,12 +671,12 @@ def handle_leave_session(data):
         if user_id == session['host']:
             emit('session_closed', {}, room=session_id)
             del listening_sessions[session_id]
-            print(f"🔒 Session geschlossen: {session_id}")
+            print(f" Session geschlossen: {session_id}")
         else:
             emit('user_left', {
                 'user_count': len(session['users'])
             }, room=session_id)
-            print(f"👋 User left session {session_id}")
+            print(f" User left session {session_id}")
 
 @socketio.on('sync_play')
 def handle_sync_play(data):
@@ -316,7 +697,7 @@ def handle_sync_play(data):
     
     # Sende an alle in der Session
     emit('sync_state', session['state'], room=session_id)
-    print(f"▶️ Sync play in session {session_id}")
+    print(f"▶ Sync play in session {session_id}")
 
 @socketio.on('sync_pause')
 def handle_sync_pause(data):
@@ -335,7 +716,7 @@ def handle_sync_pause(data):
     session['state']['is_playing'] = False
     
     emit('sync_state', session['state'], room=session_id)
-    print(f"⏸️ Sync pause in session {session_id}")
+    print(f"⏸ Sync pause in session {session_id}")
 
 @socketio.on('sync_seek')
 def handle_sync_seek(data):
@@ -1093,6 +1474,128 @@ HTML_TEMPLATE = """
             margin-left: 8px;
         }
 
+        /* Discord Embed Preview Styles */
+        .discord-embed-preview {
+            background: #36393f;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 20px 0;
+            font-family: 'Whitney', 'Helvetica Neue', 'Helvetica', 'Arial', sans-serif;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        .discord-message {
+            display: flex;
+            gap: 16px;
+        }
+
+        .discord-avatar {
+            flex-shrink: 0;
+        }
+
+        .discord-avatar-inner {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #5865f2, #7289da);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .discord-message-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .discord-username {
+            color: #fff;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .discord-embed {
+            background: #2f3136;
+            border-radius: 8px;
+            border-left: 4px solid #ff6b00;
+            overflow: hidden;
+            display: flex;
+            animation: embedSlideIn 0.6s ease-out;
+        }
+
+        @keyframes embedSlideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .discord-embed-color {
+            width: 4px;
+            background: linear-gradient(135deg, #ff6b00, #ff3d00);
+        }
+
+        .discord-embed-content {
+            flex: 1;
+            padding: 16px;
+        }
+
+        .discord-embed-title {
+            color: #fff;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            word-wrap: break-word;
+        }
+
+        .discord-embed-description {
+            color: #dcddde;
+            margin-bottom: 16px;
+            word-wrap: break-word;
+        }
+
+        .discord-embed-image {
+            margin-bottom: 16px;
+            border-radius: 4px;
+            overflow: hidden;
+            height: 200px;
+            background: linear-gradient(135deg, #ff6b00, #ff3d00);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: imagePulse 2s infinite;
+        }
+
+        .discord-embed-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .discord-embed-image-placeholder {
+            font-size: 48px;
+            opacity: 0.7;
+        }
+
+        @keyframes imagePulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+        }
+
+        .discord-embed-footer {
+            color: #72767d;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
         ::-webkit-scrollbar {
             width: 12px;
         }
@@ -1117,7 +1620,7 @@ HTML_TEMPLATE = """
     <div class="app-container">
         <div class="sidebar">
             <div class="logo">
-                <span>🌍</span>
+                <span></span>
                 PLANETIFY
             </div>
             
@@ -1153,15 +1656,20 @@ HTML_TEMPLATE = """
 
             <div class="header">
                 <div class="greeting">Hey, willkommen zurück!</div>
+                <div style="display: flex; gap: 16px; align-items: center;">
                 <button class="upload-btn" onclick="openUploadModal()">
                     📁 Songs hochladen
                 </button>
+                <button class="upload-btn" onclick="openUrlModal()" style="background: linear-gradient(135deg, #1a73e8 0%, #4285f4 100%);">
+                    🔗 Aus URL hinzufügen
+                </button>
+                </div>
             </div>
 
             <div class="section-title">Deine Musik</div>
             <div class="songs-grid" id="songsGrid">
                 <div class="empty-state">
-                    <div class="empty-state-icon">🎵</div>
+                    <div class="empty-state-icon"></div>
                     <h3>Noch keine Songs</h3>
                     <p>Lade deine ersten MP3s hoch!</p>
                 </div>
@@ -1171,7 +1679,7 @@ HTML_TEMPLATE = """
 
     <div class="player-bar">
         <div class="player-track-info">
-            <img id="playerCover" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect fill='%23ff6b00' width='100' height='100'/%3E%3C/svg%3E" alt="Cover">
+            <img id="playerCover" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect fill='%23ff6b00' width='100' height='100'/%3E%3C/svg%3E" alt="Cover" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Crect fill=%22%23ff6b00%22 width=%22100%22 height=%22100%22/%3E%3Ctext x=%2250%22 y=%2250%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22white%22 font-size=%2240%22%3E🎵%3C/text%3E%3C/svg%3E'">
             <div class="player-track-details">
                 <h4 id="playerTitle">Wähle einen Song</h4>
                 <p id="playerArtist">Artist</p>
@@ -1261,6 +1769,32 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
+    <!-- URL Upload Modal -->
+    <div class="modal" id="urlModal">
+        <div class="modal-content">
+            <div class="modal-header">Song aus URL hinzufügen</div>
+            <p style="color: #b3b3b3; margin-bottom: 20px;">
+                Füge einen Link von YouTube, Spotify oder SoundCloud ein, um den Song automatisch herunterzuladen!
+            </p>
+            <div class="form-group">
+                <label>URL eingeben</label>
+                <input type="url" id="urlInput" placeholder="https://www.youtube.com/watch?v=... oder https://open.spotify.com/track/..." style="margin-bottom: 12px;">
+                <div style="font-size: 12px; color: #666; margin-bottom: 20px;">
+                    Unterstützt: YouTube, YouTube Music, Spotify, SoundCloud
+                </div>
+            </div>
+            <div id="urlStatus" style="display: none; padding: 12px; background: rgba(255, 107, 0, 0.1); border-radius: 8px; margin-bottom: 20px; font-size: 14px; color: #ff6b00;">
+                ⏳ Lade herunter...
+            </div>
+            <div class="modal-buttons">
+                <button class="modal-btn modal-btn-cancel" onclick="closeUrlModal()">Abbrechen</button>
+                <button class="modal-btn modal-btn-submit" id="urlSubmitBtn" onclick="submitUrl()">
+                    🔗 Song hinzufügen
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Edit Modal -->
     <div class="modal" id="editModal">
         <div class="modal-content">
@@ -1286,7 +1820,58 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
+    <!-- Share Modal -->
+    <div class="modal" id="shareModal">
+        <div class="modal-content" style="max-width: 700px;">
+            <div class="modal-header">🎉 Song teilen</div>
+            <p style="color: #b3b3b3; margin-bottom: 24px; text-align: center;">
+                Teile diesen Song in Discord mit einem coolen animierten Embed!
+            </p>
+
+            <!-- Discord Embed Preview -->
+            <div class="discord-embed-preview">
+                <div class="discord-message">
+                    <div class="discord-avatar">
+                        <div class="discord-avatar-inner">👤</div>
+                    </div>
+                    <div class="discord-message-content">
+                        <div class="discord-username">Dein Name</div>
+                        <div class="discord-embed">
+                            <div class="discord-embed-color"></div>
+                            <div class="discord-embed-content">
+                                <div class="discord-embed-title" id="embedTitle">Loading...</div>
+                                <div class="discord-embed-description" id="embedDescription">Loading...</div>
+                                <div class="discord-embed-image" id="embedImage">
+                                    <div class="discord-embed-image-placeholder">🎵</div>
+                                </div>
+                                <div class="discord-embed-footer">
+                                    <span>Planetify</span>
+                                    <span>•</span>
+                                    <span id="embedDuration">0:00</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Share Link -->
+            <div class="link-display" id="shareLinkDisplay" style="margin: 20px 0;">
+                <input type="text" id="shareLink" readonly>
+                <button class="copy-btn" onclick="copyShareLink()">📋 Kopieren</button>
+            </div>
+
+            <div class="modal-buttons">
+                <button class="modal-btn modal-btn-cancel" onclick="closeShareModal()">Schließen</button>
+                <button class="modal-btn modal-btn-submit" onclick="openShareLink()">
+                    🔗 Link öffnen
+                </button>
+            </div>
+        </div>
+    </div>
+
     <script>
+        const BASE_URL = "{BASE_URL}";
         const audioPlayer = document.getElementById('audioPlayer');
         let playlist = [];
         let currentTrackIndex = -1;
@@ -1308,7 +1893,7 @@ HTML_TEMPLATE = """
 
         // Socket.IO Event Handlers
         socket.on('connect', () => {
-            console.log('✅ WebSocket verbunden');
+            console.log(' WebSocket verbunden');
         });
 
         socket.on('session_created', (data) => {
@@ -1319,12 +1904,12 @@ HTML_TEMPLATE = """
 
             updateSyncUI();
             
-            const link = `${window.location.origin}?session=${data.session_id}`;
+            const link = `${BASE_URL}?session=${data.session_id}`;
             document.getElementById('sessionLink').value = link;
             document.getElementById('sessionLinkDisplay').style.display = 'flex';
             document.getElementById('createSessionBtn').style.display = 'none';
             
-            console.log('📻 Session erstellt:', data.session_id);
+            console.log(' Session erstellt:', data.session_id);
         });
 
         socket.on('session_joined', (data) => {
@@ -1338,29 +1923,29 @@ HTML_TEMPLATE = """
 
             // Sync mit aktuellem Status
             if (data.state.current_track_index >= 0) {
-                console.log('🔄 Syncing with host state:', data.state);
+                console.log(' Syncing with host state:', data.state);
                 syncWithState(data.state);
             } else {
-                console.log('⏸️ Session beigetreten, warte auf Host...');
+                console.log('⏸ Session beigetreten, warte auf Host...');
             }
 
-            console.log('👥 Session beigetreten:', data.session_id);
+            console.log(' Session beigetreten:', data.session_id);
         });
 
         socket.on('user_joined', (data) => {
             syncState.userCount = data.user_count;
             updateSyncUI();
-            console.log('➕ User beigetreten:', data.user_count);
+            console.log(' User beigetreten:', data.user_count);
         });
 
         socket.on('user_left', (data) => {
             syncState.userCount = data.user_count;
             updateSyncUI();
-            console.log('➖ User verlassen:', data.user_count);
+            console.log(' User verlassen:', data.user_count);
         });
 
         socket.on('session_closed', () => {
-            alert('🔒 Die Session wurde vom Host geschlossen.');
+            alert(' Die Session wurde vom Host geschlossen.');
             leaveSession();
         });
 
@@ -1375,14 +1960,14 @@ HTML_TEMPLATE = """
                 // Nur synchronisieren wenn Unterschied größer als 3 Sekunden
                 const timeDiff = Math.abs(audioPlayer.currentTime - data.time);
                 if (timeDiff > 3) {
-                    console.log(`⏱️ Time drift detected: ${timeDiff}s, syncing to ${data.time}s`);
+                    console.log(`⏱ Time drift detected: ${timeDiff}s, syncing to ${data.time}s`);
                     audioPlayer.currentTime = data.time;
                 }
             }
         });
 
         socket.on('error', (data) => {
-            alert('❌ Fehler: ' + data.message);
+                alert('❌ Fehler: ' + data.message);
         });
 
         // Sync Functions
@@ -1451,17 +2036,17 @@ HTML_TEMPLATE = """
         }
 
         function syncWithState(state) {
-            console.log('🔄 Syncing state:', state);
+            console.log(' Syncing state:', state);
             
             if (state.current_track_index >= 0 && state.current_track_index < playlist.length) {
                 if (state.current_track_index !== currentTrackIndex) {
-                    console.log('🎵 Playing track:', state.current_track_index);
+                    console.log(' Playing track:', state.current_track_index);
                     playTrack(state.current_track_index, true);
                     
                     // Warte bis Track geladen ist, dann sync Zeit
                     audioPlayer.addEventListener('loadedmetadata', () => {
                         setTimeout(() => {
-                            console.log('⏱️ Setting initial time to:', state.current_time);
+                            console.log('⏱ Setting initial time to:', state.current_time);
                             audioPlayer.currentTime = state.current_time;
                         }, 100);
                     }, { once: true });
@@ -1469,7 +2054,7 @@ HTML_TEMPLATE = """
                     // Gleicher Track, nur Zeit synchronisieren
                     const timeDiff = Math.abs(audioPlayer.currentTime - state.current_time);
                     if (timeDiff > 1) {
-                        console.log(`⏱️ Syncing time: ${audioPlayer.currentTime}s -> ${state.current_time}s (diff: ${timeDiff}s)`);
+                        console.log(`⏱ Syncing time: ${audioPlayer.currentTime}s -> ${state.current_time}s (diff: ${timeDiff}s)`);
                         audioPlayer.currentTime = state.current_time;
                     }
                 }
@@ -1478,12 +2063,12 @@ HTML_TEMPLATE = """
             // Update play/pause state
             setTimeout(() => {
                 if (state.is_playing && !isPlaying) {
-                    console.log('▶️ Syncing play state');
+                    console.log('▶ Syncing play state');
                     audioPlayer.play().catch(e => console.log('Sync play error:', e));
                     isPlaying = true;
                     document.getElementById('playPauseBtn').textContent = '⏸️';
                 } else if (!state.is_playing && isPlaying) {
-                    console.log('⏸️ Syncing pause state');
+                    console.log('⏸ Syncing pause state');
                     audioPlayer.pause();
                     isPlaying = false;
                     document.getElementById('playPauseBtn').textContent = '▶️';
@@ -1589,6 +2174,9 @@ HTML_TEMPLATE = """
                 .then(data => {
                     playlist = data;
                     renderPlaylist();
+                })
+                .catch(error => {
+                    console.error('Error loading playlist:', error);
                 });
         }
 
@@ -1607,15 +2195,16 @@ HTML_TEMPLATE = """
             }
 
             grid.innerHTML = playlist.map((song, index) => {
-                const coverSrc = song.cover_url || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect fill='%23ff6b00' width='100' height='100'/%3E%3Ctext x='50' y='50' text-anchor='middle' dy='.3em' fill='white' font-size='40'%3E🎵%3C/text%3E%3C/svg%3E";
-                
+                const coverSrc = `/cover/${song.filename}`;
+
                 return `
                     <div class="song-card" onclick="playTrack(${index})">
                         <div class="song-options">
-                            <button class="option-btn" onclick="event.stopPropagation(); openEditModal(${index})" title="Bearbeiten">✏️</button>
+                                        <button class="option-btn" onclick="event.stopPropagation(); openEditModal(${index})" title="Bearbeiten">✏️</button>
+                            <button class="option-btn" onclick="event.stopPropagation(); shareSong(${index})" title="Teilen">📱</button>
                             <button class="option-btn" onclick="event.stopPropagation(); quickDelete(${index})" title="Löschen">🗑️</button>
                         </div>
-                        <img src="${coverSrc}" alt="${song.title}">
+                        <img src="${coverSrc}" alt="${song.title}" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Crect fill=%22%23ff6b00%22 width=%22100%22 height=%22100%22/%3E%3Ctext x=%2250%22 y=%2250%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22white%22 font-size=%2240%22%3E🎵%3C/text%3E%3C/svg%3E'">
                         <div class="play-overlay">▶️</div>
                         <div class="song-card-title">${song.title}</div>
                         <div class="song-card-artist">${song.artist}</div>
@@ -1635,12 +2224,12 @@ HTML_TEMPLATE = """
                 const realDuration = Math.floor(audioPlayer.duration);
                 audioPlayer.play().catch(e => console.log('Playback error:', e));
                 isPlaying = true;
-                document.getElementById('playPauseBtn').textContent = '⏸️';
+                document.getElementById('playPauseBtn').textContent = '⏸';
                 updatePlayerInfo(track, realDuration);
 
                 // Sync with session - Host sendet an alle
                 if (syncState.active && syncState.isHost && !isSync) {
-                    console.log('📡 Broadcasting play to session');
+                    console.log(' Broadcasting play to session');
                     socket.emit('sync_play', {
                         session_id: syncState.sessionId,
                         track_index: index,
@@ -1651,8 +2240,8 @@ HTML_TEMPLATE = """
         }
 
         function updatePlayerInfo(track, realDuration) {
-            const coverSrc = track.cover_url || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect fill='%23ff6b00' width='100' height='100'/%3E%3C/svg%3E";
-            
+            const coverSrc = `/cover/${track.filename}`;
+
             document.getElementById('playerCover').src = coverSrc;
             document.getElementById('playerTitle').textContent = track.title;
             document.getElementById('playerArtist').textContent = track.artist;
@@ -1674,7 +2263,7 @@ HTML_TEMPLATE = """
             if (isPlaying) {
                 audioPlayer.pause();
                 isPlaying = false;
-                document.getElementById('playPauseBtn').textContent = '▶️';
+                document.getElementById('playPauseBtn').textContent = '▶';
                 
                 fetch('/pause', { 
                     method: 'POST',
@@ -1684,7 +2273,7 @@ HTML_TEMPLATE = """
 
                 // Sync with session
                 if (syncState.active && syncState.isHost) {
-                    console.log('📡 Broadcasting pause to session');
+                    console.log(' Broadcasting pause to session');
                     socket.emit('sync_pause', {
                         session_id: syncState.sessionId,
                         time: Math.floor(audioPlayer.currentTime)
@@ -1693,7 +2282,7 @@ HTML_TEMPLATE = """
             } else {
                 audioPlayer.play().catch(e => console.log('Play error:', e));
                 isPlaying = true;
-                document.getElementById('playPauseBtn').textContent = '⏸️';
+                document.getElementById('playPauseBtn').textContent = '⏸';
                 
                 fetch('/play', { 
                     method: 'POST',
@@ -1706,7 +2295,7 @@ HTML_TEMPLATE = """
 
                 // Sync with session
                 if (syncState.active && syncState.isHost) {
-                    console.log('📡 Broadcasting play to session');
+                    console.log(' Broadcasting play to session');
                     socket.emit('sync_play', {
                         session_id: syncState.sessionId,
                         track_index: currentTrackIndex,
@@ -1838,6 +2427,76 @@ HTML_TEMPLATE = """
             }
         });
 
+        // URL Modal Functions
+        function openUrlModal() {
+            document.getElementById('urlModal').classList.add('active');
+            document.getElementById('urlInput').value = '';
+            document.getElementById('urlInput').focus();
+            document.getElementById('urlStatus').style.display = 'none';
+            document.getElementById('urlSubmitBtn').disabled = false;
+            document.getElementById('urlSubmitBtn').textContent = '🔗 Song hinzufügen';
+        }
+
+        function closeUrlModal() {
+            document.getElementById('urlModal').classList.remove('active');
+        }
+
+        function submitUrl() {
+            const url = document.getElementById('urlInput').value.trim();
+            if (!url) {
+                alert('Bitte gib eine URL ein!');
+                return;
+            }
+
+            const submitBtn = document.getElementById('urlSubmitBtn');
+            const statusEl = document.getElementById('urlStatus');
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = '⏳ Lade...';
+            statusEl.style.display = 'block';
+            statusEl.textContent = '⏳ Lade herunter...';
+
+            fetch('/upload_url', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: url })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    statusEl.style.background = 'rgba(0, 200, 0, 0.1)';
+                    statusEl.style.color = '#00c853';
+                    statusEl.textContent = '✅ ' + data.message;
+
+                    // Modal nach kurzer Zeit schließen und Playlist aktualisieren
+                    setTimeout(() => {
+                        closeUrlModal();
+                        loadPlaylist();
+                    }, 2000);
+                } else {
+                    throw new Error(data.error || 'Unbekannter Fehler');
+                }
+            })
+            .catch(err => {
+                console.error('URL Upload Fehler:', err);
+                statusEl.style.background = 'rgba(200, 0, 0, 0.1)';
+                statusEl.style.color = '#ff3d3d';
+                statusEl.textContent = '❌ Fehler: ' + err.message;
+
+                submitBtn.disabled = false;
+                submitBtn.textContent = ' Song hinzufügen';
+            });
+        }
+
+        // Enter-Key Support für URL-Input
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('urlInput').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    submitUrl();
+                }
+            });
+        });
+
         function openEditModal(index) {
             const song = playlist[index];
             document.getElementById('editSongId').value = song.id;
@@ -1849,6 +2508,31 @@ HTML_TEMPLATE = """
 
         function closeEditModal() {
             document.getElementById('editModal').classList.remove('active');
+        }
+
+        function closeShareModal() {
+            document.getElementById('shareModal').classList.remove('active');
+        }
+
+        function copyShareLink() {
+            const linkInput = document.getElementById('shareLink');
+            linkInput.select();
+            document.execCommand('copy');
+
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = '✓ Kopiert!';
+            btn.style.background = '#00c853';
+
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.style.background = '';
+            }, 2000);
+        }
+
+        function openShareLink() {
+            const shareUrl = document.getElementById('shareLink').value;
+            window.open(shareUrl, '_blank');
         }
 
         function saveSongEdit() {
@@ -1869,10 +2553,35 @@ HTML_TEMPLATE = """
             });
         }
 
+        function shareSong(index) {
+            const song = playlist[index];
+            const shareUrl = `${BASE_URL}/share/${song.id}`;
+
+            // Fülle Modal mit Song-Daten
+            document.getElementById('embedTitle').textContent = song.title;
+            document.getElementById('embedDescription').textContent = `🎵 ${song.artist}${song.album ? ` • ${song.album}` : ''}`;
+            document.getElementById('embedDuration').textContent = formatTime(song.duration);
+            document.getElementById('shareLink').value = shareUrl;
+
+            // Setze Cover-Bild
+            const embedImage = document.getElementById('embedImage');
+            const img = new Image();
+            img.onload = function() {
+                embedImage.innerHTML = `<img src="/cover/${song.filename}" alt="${song.title}" style="width: 100%; height: 100%; object-fit: cover;">`;
+            };
+            img.onerror = function() {
+                embedImage.innerHTML = '<div class="discord-embed-image-placeholder">🎵</div>';
+            };
+            img.src = `/cover/${song.filename}`;
+
+            // Öffne Modal
+            document.getElementById('shareModal').classList.add('active');
+        }
+
         function quickDelete(index) {
             const song = playlist[index];
             if (!confirm(`"${song.title}" wirklich löschen?`)) return;
-            
+
             fetch('/delete_song', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -2000,7 +2709,16 @@ def index():
 
 @app.route('/playlist')
 def get_playlist():
+    global playlist
+    # Lazy loading der Playlist
+    if playlist is None:
+        playlist = load_songs_db()
+        print(f"Loaded playlist with {len(playlist)} songs")
     return jsonify(playlist)
+
+@app.route('/test')
+def test():
+    return "Hello World"
 
 @app.route('/stream/<filename>')
 def stream_music(filename):
@@ -2009,6 +2727,31 @@ def stream_music(filename):
     if not mimetype:
         mimetype = 'audio/mpeg'
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename, mimetype=mimetype)
+
+@app.route('/cover/<filename>')
+def get_cover(filename):
+    """Extrahiert und gibt das Cover aus einer MP3-Datei zurück"""
+    try:
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if not os.path.exists(filepath):
+            return jsonify({'error': 'Datei nicht gefunden'}), 404
+
+        from mutagen.mp3 import MP3
+        audio = MP3(filepath)
+
+        if audio.tags:
+            # Suche nach APIC-Tag (Album Cover)
+            for tag_name in audio.tags.keys():
+                if 'APIC' in str(tag_name):
+                    pic = audio.tags[tag_name]
+                    return Response(pic.data, mimetype=f'image/{pic.mime.split("/")[1]}')
+
+        # Fallback: Standard-Cover zurückgeben
+        return send_from_directory('static', 'default_cover.png', mimetype='image/png')
+
+    except Exception as e:
+        print(f"Cover-Fehler für {filename}: {e}")
+        return send_from_directory('static', 'default_cover.png', mimetype='image/png')
 
 @app.route('/upload', methods=['POST'])
 def upload_files():
@@ -2034,8 +2777,13 @@ def upload_files():
             
             metadata = extract_metadata(filepath)
             
+            global playlist
+            # Stelle sicher, dass playlist geladen ist
+            if playlist is None:
+                playlist = load_songs_db()
+
             new_song = {
-                'id': max([s['id'] for s in playlist], default=0) + 1,
+                'id': max([s['id'] for s in playlist] + [0]) + 1,
                 'filename': filename,
                 'title': metadata['title'],
                 'artist': metadata['artist'],
@@ -2047,13 +2795,75 @@ def upload_files():
             uploaded += 1
     
     save_songs_db(playlist)
+    # Stelle sicher, dass globale playlist mit Datenbank synchronisiert ist
+    playlist = load_songs_db()
+    print(f" {uploaded} Song(s) erfolgreich hochgeladen und Playlist aktualisiert")
     return jsonify({'success': True, 'uploaded': uploaded})
+
+@app.route('/upload_url', methods=['POST'])
+def upload_from_url():
+    data = request.get_json()
+    url = data.get('url', '').strip()
+
+    if not url:
+        return jsonify({'error': 'Keine URL angegeben'}), 400
+
+    # Überprüfen ob URL von unterstützten Plattformen ist
+    supported_domains = ['youtube.com', 'youtu.be', 'spotify.com', 'soundcloud.com', 'music.youtube.com']
+    if not any(domain in url.lower() for domain in supported_domains):
+        return jsonify({'error': 'Nicht unterstützte URL. Unterstützt: YouTube, Spotify, SoundCloud'}), 400
+
+    # Spezielle Überprüfung für Spotify
+    if 'spotify.com' in url.lower() and not SPOTDL_AVAILABLE:
+        return jsonify({'error': 'Spotify-URLs benötigen spotdl. Installiere mit: pip install spotdl'}), 400
+
+    try:
+        # Download durchführen
+        filepath, metadata = download_from_url(url)
+
+        # Song zur Playlist hinzufügen
+        global playlist
+        # Stelle sicher, dass playlist geladen ist
+        if playlist is None:
+            playlist = load_songs_db()
+
+        new_song = {
+            'id': max([s['id'] for s in playlist] + [0]) + 1,
+            'filename': os.path.basename(filepath),
+            'title': metadata['title'],
+            'artist': metadata['artist'],
+            'album': metadata['album'],
+            'duration': metadata['duration'],
+            'cover_url': ''
+        }
+
+        playlist.append(new_song)
+        save_songs_db(playlist)
+
+        # Stelle sicher, dass globale playlist mit Datenbank synchronisiert ist
+        playlist = load_songs_db()
+
+        print(f" Song hinzugefügt: {metadata['title']} - {metadata['artist']}")
+        return jsonify({
+            'success': True,
+            'song': new_song,
+            'message': f"'{metadata['title']}' wurde erfolgreich hinzugefügt!"
+        })
+
+    except Exception as e:
+        print(f" URL Upload Fehler: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/edit_song', methods=['POST'])
 def edit_song():
     data = request.get_json()
     song_id = data['id']
-    
+
+    global playlist
+    # Stelle sicher, dass playlist geladen ist
+    if playlist is None:
+        playlist = load_songs_db()
+
     for song in playlist:
         if song['id'] == song_id:
             song['title'] = data['title']
@@ -2128,26 +2938,421 @@ def pause():
 def update_time():
     data = request.get_json()
     player_state['current_time'] = data['time']
-    
+
     if 'is_playing' in data:
         old_state = player_state['is_playing']
         player_state['is_playing'] = data['is_playing']
-        
+
         if old_state != player_state['is_playing']:
             update_discord_presence()
-    
+
     if 'duration' in data and player_state['current_track_index'] >= 0:
         playlist[player_state['current_track_index']]['duration'] = data['duration']
-    
+
     return jsonify({'success': True})
+
+@app.route('/share/<int:song_id>/cover')
+def share_song_cover(song_id):
+    """Gibt das Cover für Discord Embeds zurück - optimiert für Discord"""
+    global playlist
+    if playlist is None:
+        playlist = load_songs_db()
+
+    song = next((s for s in playlist if s['id'] == song_id), None)
+    if not song:
+        # Erstelle ein dynamisches Cover für diesen Song
+        return create_dynamic_cover(song['title'], song['artist'])
+
+    try:
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], song['filename'])
+        if not os.path.exists(filepath):
+            return create_dynamic_cover(song['title'], song['artist'])
+
+        from mutagen.mp3 import MP3
+        from PIL import Image, ImageDraw, ImageFont
+        import io
+
+        audio = MP3(filepath)
+
+        if audio.tags:
+            # Suche nach APIC-Tag (Album Cover)
+            for tag_name in audio.tags.keys():
+                if 'APIC' in str(tag_name):
+                    pic = audio.tags[tag_name]
+
+                    # Öffne das Bild mit PIL und resize es auf 512x512 für Discord
+                    img = Image.open(io.BytesIO(pic.data))
+
+                    # Konvertiere zu RGB wenn nötig
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+
+                    # Resize auf 512x512 für beste Discord Qualität
+                    img = img.resize((512, 512), Image.Resampling.LANCZOS)
+
+                    # Speichere als JPEG für kleinere Dateigröße
+                    output = io.BytesIO()
+                    img.save(output, format='JPEG', quality=85)
+                    output.seek(0)
+
+                    return Response(output.getvalue(), mimetype='image/jpeg')
+
+        # Fallback: Erstelle ein dynamisches Cover
+        return create_dynamic_cover(song['title'], song['artist'])
+
+    except Exception as e:
+        print(f"Cover-Fehler für {song_id}: {e}")
+        return create_dynamic_cover(song['title'], song['artist'])
+
+def create_dynamic_cover(title, artist):
+    """Erstellt ein dynamisches Cover für Songs ohne Cover"""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        import io
+
+        # Erstelle ein 512x512 Bild
+        img = Image.new('RGB', (512, 512), color='#ff6b00')
+        draw = ImageDraw.Draw(img)
+
+        # Erstelle einen Gradient-Hintergrund
+        for y in range(512):
+            r = int(255 - (y / 512) * 100)
+            g = int(107 - (y / 512) * 50)
+            b = int(0 + (y / 512) * 100)
+            for x in range(512):
+                draw.point((x, y), fill=(r, g, b))
+
+        # Zeichne einen Musik-Emoji in die Mitte
+        try:
+            # Versuche eine große Schriftart zu verwenden
+            font = ImageFont.truetype("arial.ttf", 200)
+        except:
+            # Fallback auf Default-Schriftart
+            font = ImageFont.load_default()
+
+        # Zentriere den Emoji
+        emoji = "🎵"
+        bbox = draw.textbbox((0, 0), emoji, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        x = (512 - text_width) // 2
+        y = (512 - text_height) // 2 - 50
+
+        draw.text((x, y), emoji, fill='white', font=font)
+
+        # Füge Song-Info hinzu
+        try:
+            small_font = ImageFont.truetype("arial.ttf", 40)
+        except:
+            small_font = ImageFont.load_default()
+
+        # Titel
+        title_text = title[:20] + "..." if len(title) > 20 else title
+        bbox = draw.textbbox((0, 0), title_text, font=small_font)
+        text_width = bbox[2] - bbox[0]
+        x = (512 - text_width) // 2
+        draw.text((x, 350), title_text, fill='white', font=small_font)
+
+        # Artist
+        artist_text = artist[:25] + "..." if len(artist) > 25 else artist
+        bbox = draw.textbbox((0, 0), artist_text, font=small_font)
+        text_width = bbox[2] - bbox[0]
+        x = (512 - text_width) // 2
+        draw.text((x, 400), artist_text, fill='white', font=small_font)
+
+        # Speichere als JPEG
+        output = io.BytesIO()
+        img.save(output, format='JPEG', quality=90)
+        output.seek(0)
+
+        return Response(output.getvalue(), mimetype='image/jpeg')
+
+    except ImportError:
+        # Fallback ohne PIL
+        return send_from_directory('static', 'default_cover.png', mimetype='image/png')
+    except Exception as e:
+        print(f"Dynamic cover error: {e}")
+        return send_from_directory('static', 'default_cover.png', mimetype='image/png')
+
+@app.route('/test_embed/<int:song_id>')
+def test_embed(song_id):
+    """Test-Route um Discord Embeds zu validieren"""
+    global playlist
+    if playlist is None:
+        playlist = load_songs_db()
+
+    song = next((s for s in playlist if s['id'] == song_id), None)
+    if not song:
+        return "Song nicht gefunden", 404
+
+    share_url = f"{BASE_URL}/share/{song_id}"
+
+    return f"""
+    <h1>Test: {song['title']}</h1>
+    <p>Share URL: <a href="{share_url}">{share_url}</a></p>
+    <p>Discord sollte diesen Link automatisch zu einem Embed machen!</p>
+    <img src="{share_url}/cover" style="max-width: 300px;">
+    """, 200, {'Content-Type': 'text/html; charset=utf-8'}
+
+@app.route('/share/<int:song_id>')
+def share_song(song_id):
+    """Gibt eine Share-Seite für einen Song zurück mit Discord Embed Metadaten"""
+    global playlist
+    if playlist is None:
+        playlist = load_songs_db()
+
+    song = next((s for s in playlist if s['id'] == song_id), None)
+    if not song:
+        return "Song nicht gefunden", 404
+
+    # Erstelle die Share-URL
+    share_url = f"{BASE_URL}/share/{song_id}"
+
+    # HTML mit Open Graph Metadaten für Discord Embeds
+    share_html = f"""<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{song['title']} - {song['artist']} | Planetify</title>
+
+    <!-- Discord Embed Metadaten -->
+    <meta name="description" content="🎵 {song['artist']} - {song['title']}{f" • {song['album']}" if song['album'] else ""} | Planetify Music Player">
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="music.song">
+    <meta property="og:site_name" content="Planetify">
+    <meta property="og:title" content="{song['title']}">
+    <meta property="og:description" content="🎵 {song['artist']}{f" • {song['album']}" if song['album'] else ""} • {song['duration']//60}:{song['duration']%60:02d}">
+    <meta property="og:url" content="{share_url}">
+    <meta property="og:image" content="{share_url}/cover">
+    <meta property="og:image:width" content="512">
+    <meta property="og:image:height" content="512">
+    <meta property="og:image:type" content="image/jpeg">
+
+    <!-- Music specific Open Graph tags -->
+    <meta property="music:musician" content="{song['artist']}">
+    <meta property="music:album" content="{song.get('album', '') or ''}">
+    <meta property="music:song" content="{song['title']}">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:site" content="@planetify">
+    <meta name="twitter:title" content="{song['title']}">
+    <meta name="twitter:description" content="🎵 {song['artist']}{f" • {song['album']}" if song['album'] else ""} | Planetify">
+    <meta name="twitter:image" content="{share_url}/cover">
+
+    <!-- Additional Discord specific meta tags -->
+    <meta name="theme-color" content="#ff6b00">
+    <meta name="color-scheme" content="dark">
+    <link rel="canonical" href="{share_url}">
+
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: radial-gradient(ellipse at top, #1a0f00 0%, #000 50%);
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }}
+
+        .share-container {{
+            background: linear-gradient(135deg, rgba(255, 107, 0, 0.1), rgba(255, 61, 0, 0.05));
+            border: 1px solid rgba(255, 107, 0, 0.3);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(255, 107, 0, 0.2);
+            animation: fadeInUp 0.8s ease-out;
+        }}
+
+        @keyframes fadeInUp {{
+            from {{
+                opacity: 0;
+                transform: translateY(30px);
+            }}
+            to {{
+                opacity: 1;
+                transform: translateY(0);
+            }}
+        }}
+
+        .logo {{
+            font-size: 32px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #ff6b00 0%, #ff3d00 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 30px;
+        }}
+
+        .song-cover {{
+            width: 200px;
+            height: 200px;
+            border-radius: 16px;
+            margin: 0 auto 24px;
+            box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+            border: 2px solid rgba(255, 107, 0, 0.3);
+            object-fit: cover;
+            background: linear-gradient(135deg, #ff6b00, #ff3d00);
+        }}
+
+        .song-title {{
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #fff 0%, #b3b3b3 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }}
+
+        .song-artist {{
+            font-size: 18px;
+            color: #b3b3b3;
+            margin-bottom: 16px;
+        }}
+
+        .song-album {{
+            font-size: 16px;
+            color: #888;
+            margin-bottom: 30px;
+        }}
+
+        .share-actions {{
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            margin-bottom: 24px;
+        }}
+
+        .share-btn {{
+            background: linear-gradient(135deg, #5865F2 0%, #4752C4 100%);
+            color: #fff;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 24px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+            box-shadow: 0 4px 16px rgba(88, 101, 242, 0.3);
+        }}
+
+        .share-btn:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(88, 101, 242, 0.5);
+        }}
+
+        .listen-btn {{
+            background: linear-gradient(135deg, #ff6b00 0%, #ff3d00 100%);
+            box-shadow: 0 4px 16px rgba(255, 107, 0, 0.3);
+        }}
+
+        .listen-btn:hover {{
+            box-shadow: 0 8px 24px rgba(255, 107, 0, 0.5);
+        }}
+
+        .share-info {{
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 20px;
+            font-size: 14px;
+            color: #b3b3b3;
+        }}
+
+        .share-info h3 {{
+            color: #fff;
+            margin-bottom: 12px;
+            font-size: 16px;
+        }}
+
+        .pulse-animation {{
+            animation: pulse 2s infinite;
+        }}
+
+        @keyframes pulse {{
+            0%, 100% {{ opacity: 1; transform: scale(1); }}
+            50% {{ opacity: 0.7; transform: scale(0.98); }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="share-container">
+        <div class="logo">PLANETIFY</div>
+
+        <img src="/cover/{song['filename']}" alt="{song['title']}" class="song-cover pulse-animation"
+             onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 200 200%22%3E%3Crect fill=%22%23ff6b00%22 width=%22200%22 height=%22200%22 rx=%2216%22/%3E%3Ctext x=%22100%22 y=%22100%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22white%22 font-size=%2260%22%3E🎵%3C/text%3E%3C/svg%3E'">
+
+        <h1 class="song-title">{song['title']}</h1>
+        <div class="song-artist">von {song['artist']}</div>
+        {f'<div class="song-album">{song["album"]}</div>' if song['album'] else ""}
+
+        <div class="share-actions">
+            <button class="share-btn" onclick="shareOnDiscord()">
+                📱 In Discord teilen
+            </button>
+            <a href="/" class="share-btn listen-btn">
+                🎧 Jetzt anhören
+            </a>
+        </div>
+
+        <div class="share-info">
+            <h3>🎉 Geteilter Song!</h3>
+            <p>Dieser Link zeigt in Discord ein cooles animiertes Embed mit Cover, Titel und Artist an. Teile deine Lieblingssongs mit deinen Freunden!</p>
+        </div>
+    </div>
+
+    <script>
+        function shareOnDiscord() {{
+            // Kopiere Link in Zwischenablage
+            navigator.clipboard.writeText(window.location.href).then(() => {{
+                alert('✅ Link kopiert! Füge ihn in Discord ein für ein cooles Embed.');
+            }}).catch(() => {{
+                // Fallback für ältere Browser
+                const textArea = document.createElement('textarea');
+                textArea.value = window.location.href;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                alert('✅ Link kopiert! Füge ihn in Discord ein für ein cooles Embed.');
+            }});
+        }}
+
+        // Automatische Weiterleitung nach 3 Sekunden (optional)
+        // setTimeout(() => {{
+        //     window.location.href = '/';
+        // }}, 3000);
+    </script>
+</body>
+</html>"""
+
+    return share_html
 
 if __name__ == '__main__':
     threading.Thread(target=init_discord_rpc, daemon=True).start()
     
-    print("🌍 Planetify startet...")
-    print("✨ Öffne http://localhost:10000")
-    print("📁 Musik-Ordner: ./music_library/")
-    print("🎵 Viel Spaß!")
+    print("Planetify startet...")
+    print("Offne http://localhost:10000")
+    print("Musik-Ordner: ./music_library/")
+    print("Viel Spass!")
     
     port = int(os.environ.get("PORT", 10000))
     socketio.run(app, host="0.0.0.0", port=port, debug=False)
