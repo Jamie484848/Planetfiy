@@ -3294,6 +3294,46 @@ def create_dynamic_cover(title, artist):
         print(f"Dynamic cover error: {e}")
         return send_from_directory('static', 'default_cover.png', mimetype='image/png')
 
+@app.route('/embed_meta/<int:song_id>')
+def embed_meta(song_id):
+    """Gibt die Open Graph Metadaten als JSON zurück für Debugging"""
+    global playlist
+    if playlist is None:
+        playlist = load_songs_db()
+
+    song = next((s for s in playlist if s['id'] == song_id), None)
+    if not song:
+        return jsonify({'error': 'Song nicht gefunden'}), 404
+
+    share_url = f"{BASE_URL}/share/{song_id}"
+
+    return jsonify({
+        'title': song['title'],
+        'artist': song['artist'],
+        'album': song.get('album', ''),
+        'duration': song['duration'],
+        'share_url': share_url,
+        'cover_url': f"{share_url}/cover",
+        'preview_url': f"{share_url}/preview.mp3",
+        'open_graph': {
+            'og:type': 'music.song',
+            'og:site_name': 'Planetify',
+            'og:title': song['title'],
+            'og:description': f"🎵 {song['artist']}{' • ' + song['album'] if song['album'] else ''} • {song['duration']//60}:{song['duration']%60:02d}\n\n▶️ Hörprobe abspielen | 🎧 Auf Planetify hören",
+            'og:url': share_url,
+            'og:image': f"{share_url}/cover",
+            'og:image:width': '512',
+            'og:image:height': '512',
+            'og:image:type': 'image/jpeg',
+            'og:audio': f"{share_url}/preview.mp3",
+            'og:audio:type': 'audio/mpeg',
+            'music:musician': song['artist'],
+            'music:album': song.get('album', ''),
+            'music:song': song['title'],
+            'music:duration': song['duration']
+        }
+    })
+
 @app.route('/test_embed/<int:song_id>')
 def test_embed(song_id):
     """Test-Route um Discord Embeds zu validieren"""
@@ -3308,10 +3348,42 @@ def test_embed(song_id):
     share_url = f"{BASE_URL}/share/{song_id}"
 
     return f"""
-    <h1>Test: {song['title']}</h1>
-    <p>Share URL: <a href="{share_url}">{share_url}</a></p>
-    <p>Discord sollte diesen Link automatisch zu einem Embed machen!</p>
-    <img src="{share_url}/cover" style="max-width: 300px;">
+    <h1>🎵 Discord Embed Test</h1>
+    <p><strong>Song:</strong> {song['title']} - {song['artist']}</p>
+    <p><strong>Share URL:</strong> <a href="{share_url}" target="_blank">{share_url}</a></p>
+
+    <h2>📋 Kopiere diesen Link in Discord:</h2>
+    <input type="text" value="{share_url}" readonly style="width: 100%; padding: 10px; font-family: monospace; margin: 10px 0;" onclick="this.select()">
+
+    <h2>🖼️ Cover-Bild:</h2>
+    <img src="{share_url}/cover" style="max-width: 300px; border: 2px solid #ff6b00; border-radius: 8px;">
+
+    <h2>🎧 Hörprobe (30s):</h2>
+    <audio controls style="width: 100%;">
+        <source src="{share_url}/preview.mp3" type="audio/mpeg">
+        Dein Browser unterstützt kein Audio.
+    </audio>
+
+    <h2>📱 Wie das Discord Embed aussehen sollte:</h2>
+    <div style="border: 2px solid #5865F2; border-radius: 8px; padding: 16px; background: #36393f; color: white; font-family: 'Whitney', sans-serif;">
+        <div style="display: flex; gap: 16px;">
+            <img src="{share_url}/cover" style="width: 80px; height: 80px; border-radius: 4px; object-fit: cover;">
+            <div>
+                <div style="font-weight: bold; color: #00b0f4;">Planetify</div>
+                <div style="font-size: 16px; font-weight: 600; margin: 4px 0;">{song['title']}</div>
+                <div style="color: #dcddde;">🎵 {song['artist']}{f" • {song['album']}" if song['album'] else ""} • {song['duration']//60}:{song['duration']%60:02d}</div>
+                <div style="color: #5865f2; font-size: 12px; margin-top: 8px;">
+                    ▶️ <a href="{share_url}/preview.mp3" style="color: #5865f2;">Hörprobe abspielen</a> |
+                    🎧 <a href="{share_url}" style="color: #5865f2;">Auf Planetify hören</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <p style="margin-top: 20px; color: #666;">
+        <strong>Hinweis:</strong> Discord zeigt Embeds nur bei öffentlich zugänglichen URLs an.
+        Deploye die App auf Render.com, dann funktionieren die Embeds perfekt!
+    </p>
     """, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
 @app.route('/share/<int:song_id>')
@@ -3337,13 +3409,15 @@ def share_song(song_id):
     <title>{song['title']} - {song['artist']} | Planetify</title>
 
     <!-- Discord Embed Metadaten -->
-    <meta name="description" content="🎵 {song['artist']} - {song['title']}{f" • {song['album']}" if song['album'] else ""} | Planetify Music Player">
+    <meta name="description" content="🎵 Höre {song['title']} von {song['artist']}{f' • Album: {song["album"]}' if song['album'] else ''} | {song['duration']//60}:{song['duration']%60:02d} | Kostenlose Musik auf Planetify">
 
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="music.song">
     <meta property="og:site_name" content="Planetify">
     <meta property="og:title" content="{song['title']}">
-    <meta property="og:description" content="🎵 {song['artist']}{f" • {song['album']}" if song['album'] else ""} • {song['duration']//60}:{song['duration']%60:02d} • Jetzt auf Planetify anhören">
+    <meta property="og:description" content="🎵 {song['artist']}{f" • {song['album']}" if song['album'] else ""} • {song['duration']//60}:{song['duration']%60:02d}
+
+▶️ [Hörprobe abspielen]({share_url}/preview.mp3) | 🎧 [Auf Planetify hören]({share_url})">
     <meta property="og:url" content="{share_url}">
     <meta property="og:image" content="{share_url}/cover">
     <meta property="og:image:width" content="512">
@@ -3586,21 +3660,33 @@ def share_song(song_id):
 
             <div class="preview-section">
                 <h4>🎵 Hörprobe anhören</h4>
-                <p style="font-size: 13px; color: #b3b3b3; margin-bottom: 12px;">30 Sekunden Vorschau des Songs</p>
+                <p style="font-size: 13px; color: #b3b3b3; margin-bottom: 12px;">30 Sekunden Vorschau des Songs - direkt in Discord abspielbar!</p>
                 <div class="preview-player">
                     <button class="preview-btn" onclick="togglePreview()" id="previewBtn">
                         <span id="previewIcon">▶️</span>
                         Vorschau abspielen
                     </button>
+                    <a href="{share_url}/preview.mp3" class="preview-btn" style="margin-left: 8px; background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);" target="_blank">
+                        🎧 In Discord hören
+                    </a>
                 </div>
                 <audio id="previewAudio" style="display: none;" onended="onPreviewEnded()">
-                    <source src="/share/{song_id}/preview.mp3" type="audio/mpeg">
+                    <source src="{share_url}/preview.mp3" type="audio/mpeg">
                 </audio>
+                <p style="font-size: 11px; color: #666; margin-top: 8px;">
+                    💡 Tipp: Der "In Discord hören" Link kann direkt in Discord geteilt werden und ist dort abspielbar!
+                </p>
             </div>
 
             <div class="share-info">
                 <h3>🎉 Song teilen</h3>
-                <p>Teile diesen Song-Link in Discord oder anderen sozialen Medien. Der Link zeigt ein ansprechendes Embed mit Album-Cover, Song-Informationen und einer Hörprobe an.</p>
+                <p>Teile diesen Song-Link in Discord oder anderen sozialen Medien. Der Link zeigt ein ansprechendes Embed mit Album-Cover, Song-Informationen und einer 30-Sekunden Hörprobe an.</p>
+                <p style="font-size: 13px; color: #b3b3b3; margin-top: 8px;">
+                    🎧 <strong>Hörprobe in Discord:</strong> Die 30-Sekunden Vorschau ist direkt in Discord abspielbar - einfach den Link teilen!
+                </p>
+                <p style="font-size: 12px; margin-top: 8px; color: #888;">
+                    <strong>Test-Link:</strong> <a href="/test_embed/{song_id}" target="_blank" style="color: #ff6b00;">Embed-Vorschau ansehen</a>
+                </p>
             </div>
     </div>
 
