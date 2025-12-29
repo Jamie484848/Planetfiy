@@ -3105,6 +3105,72 @@ def scan_metadata():
         'errors': errors
     })
 
+@app.route('/share/<int:song_id>/listen')
+def share_song_listen(song_id):
+    """Kleine Seite die automatisch die Hörprobe abspielt"""
+    global playlist
+    if playlist is None:
+        playlist = load_songs_db()
+
+    song = next((s for s in playlist if s['id'] == song_id), None)
+    if not song:
+        return "Song nicht gefunden", 404
+
+    share_url = f"{BASE_URL}/share/{song_id}"
+
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>{song['title']} - Hörprobe</title>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                background: #000;
+                color: #fff;
+                text-align: center;
+                padding: 20px;
+            }}
+            .player {{
+                max-width: 400px;
+                margin: 0 auto;
+                background: #1a1a1a;
+                padding: 20px;
+                border-radius: 10px;
+            }}
+            audio {{
+                width: 100%;
+                margin: 20px 0;
+            }}
+            .back {{
+                display: inline-block;
+                margin-top: 20px;
+                padding: 10px 20px;
+                background: #ff6b00;
+                color: white;
+                text-decoration: none;
+                border-radius: 5px;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="player">
+            <h2>{song['title']}</h2>
+            <p>von {song['artist']}</p>
+
+            <audio controls autoplay>
+                <source src="{share_url}/preview.mp3" type="audio/mpeg">
+                Dein Browser unterstützt kein Audio.
+            </audio>
+
+            <p><small>30-Sekunden Hörprobe</small></p>
+
+            <a href="{share_url}" class="back">▶️ Vollversion abspielen</a>
+        </div>
+    </body>
+    </html>
+    """, 200, {'Content-Type': 'text/html; charset=utf-8'}
+
 @app.route('/share/<int:song_id>/preview.mp3')
 def share_song_preview(song_id):
     """Erstellt eine 30-Sekunden Audio-Vorschau für Discord"""
@@ -3174,9 +3240,9 @@ def share_song_preview(song_id):
         return send_from_directory(app.config['UPLOAD_FOLDER'], song['filename'],
                                  mimetype='audio/mpeg')
 
-@app.route('/share/<int:song_id>/cover.png')
-def share_song_cover_png(song_id):
-    """Gibt das Cover als PNG für Discord Embeds zurück"""
+@app.route('/share/<int:song_id>/cover')
+def share_song_cover(song_id):
+    """Gibt das Cover für Discord Embeds zurück (JPG für Kompatibilität)"""
     global playlist
     if playlist is None:
         playlist = load_songs_db()
@@ -3202,7 +3268,7 @@ def share_song_cover_png(song_id):
                 if 'APIC' in str(tag_name):
                     pic = audio.tags[tag_name]
 
-                    # Öffne das Bild mit PIL und konvertiere zu PNG
+                    # Öffne das Bild mit PIL
                     img = Image.open(io.BytesIO(pic.data))
 
                     # Konvertiere zu RGB wenn nötig
@@ -3212,12 +3278,12 @@ def share_song_cover_png(song_id):
                     # Resize auf 512x512 für beste Discord Qualität
                     img = img.resize((512, 512), Image.Resampling.LANCZOS)
 
-                    # Speichere als PNG
+                    # Speichere als JPEG für bessere Kompatibilität
                     output = io.BytesIO()
-                    img.save(output, format='PNG')
+                    img.save(output, format='JPEG', quality=85)
                     output.seek(0)
 
-                    return Response(output.getvalue(), mimetype='image/png')
+                    return Response(output.getvalue(), mimetype='image/jpeg')
 
         # Fallback: Erstelle ein dynamisches Cover
         return create_dynamic_cover(song['title'], song['artist'], 512, 512)
@@ -3226,8 +3292,28 @@ def share_song_cover_png(song_id):
         print(f"Cover-Fehler für {song_id}: {e}")
         return create_dynamic_cover(song['title'], song['artist'], 512, 512)
 
-@app.route('/share/<int:song_id>/cover')
-def share_song_cover(song_id):
+@app.route('/share/<int:song_id>/cover.png')
+def share_song_cover_png(song_id):
+    """Gibt das Cover als PNG für Discord Embeds zurück"""
+    # Verwende die gleiche Logik wie cover, aber gib PNG zurück
+    response = share_song_cover(song_id)
+    if hasattr(response, 'mimetype') and response.mimetype == 'image/jpeg':
+        # Konvertiere JPEG zu PNG
+        try:
+            from PIL import Image
+            import io
+
+            img = Image.open(io.BytesIO(response.get_data()))
+            output = io.BytesIO()
+            img.save(output, format='PNG')
+            output.seek(0)
+            return Response(output.getvalue(), mimetype='image/png')
+        except:
+            pass
+    return response
+
+@app.route('/share/<int:song_id>/cover.png')
+def share_song_cover_png(song_id):
     """Gibt das Cover für Discord Embeds zurück - optimiert für Discord"""
     global playlist
     if playlist is None:
@@ -3405,9 +3491,9 @@ def embed_test(song_id):
         <meta property="og:title" content="{song['title']}">
         <meta property="og:description" content="🎵 {song['artist']} • {song['duration']//60}:{song['duration']%60:02d}
 
-Hörprobe: {share_url}/preview.mp3
+▶️ Hörprobe anhören: {share_url}/listen
 
-Song hören: {share_url}">
+🎵 Vollversion spielen: {share_url}">
         <meta property="og:url" content="{share_url}">
         <meta property="og:image" content="{share_url}/cover.png">
         <meta property="og:image:width" content="512">
@@ -3463,9 +3549,9 @@ def share_song(song_id):
     <meta property="og:title" content="{song['title']}">
     <meta property="og:description" content="🎵 {song['artist']} • {song['duration']//60}:{song['duration']%60:02d}
 
-Hörprobe: {share_url}/preview.mp3
+▶️ Hörprobe anhören: {share_url}/listen
 
-Song hören: {share_url}">
+🎵 Vollversion spielen: {share_url}">
     <meta property="og:url" content="{share_url}">
     <meta property="og:image" content="{share_url}/cover.png?v=1">
     <meta property="og:image:width" content="512">
