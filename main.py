@@ -3135,13 +3135,10 @@ def share_song(song_id):
     artist = song['artist'].replace('"', '&quot;').replace("'", '&#39;')
     album = song.get('album', '').replace('"', '&quot;').replace("'", '&#39;')
     
-    # Discord-optimierte Beschreibung mit direkten Links
-    # Discord macht URLs automatisch zu klickbaren Links
-    description = f"""🎵 {artist}{' • ' + album if album else ''}
-⏱️ {duration_str}
+    description = f"""🎵 {artist}{' • ' + album if album else ''} • {duration_str}
 
-🔊 Hörprobe: {share_url}/preview
-💿 Vollversion: {share_url}/play"""
+▶️ [Hörprobe anhören]({share_url}/preview)
+🎧 [Vollversion abspielen]({share_url}/play)"""
     
     html = f"""<!DOCTYPE html>
 <html lang="de" prefix="og: http://ogp.me/ns#">
