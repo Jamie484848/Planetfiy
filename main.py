@@ -3171,6 +3171,75 @@ def share_song_play(song_id):
     </html>
     """, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
+@app.route('/share/<int:song_id>/embed')
+def share_song_embed(song_id):
+    """Einbettbarer Player für Twitter/Discord"""
+    global playlist
+    if playlist is None:
+        playlist = load_songs_db()
+
+    song = next((s for s in playlist if s['id'] == song_id), None)
+    if not song:
+        return "Song nicht gefunden", 404
+
+    share_url = f"{BASE_URL}/share/{song_id}"
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {{
+            margin: 0;
+            padding: 20px;
+            background: #1a1a1a;
+            font-family: Arial, sans-serif;
+            color: #fff;
+        }}
+        .embed-player {{
+            max-width: 100%;
+        }}
+        .cover {{
+            width: 100px;
+            height: 100px;
+            border-radius: 8px;
+            float: left;
+            margin-right: 16px;
+            object-fit: cover;
+        }}
+        .info {{
+            overflow: hidden;
+        }}
+        .title {{
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 4px;
+        }}
+        .artist {{
+            font-size: 14px;
+            color: #b3b3b3;
+            margin-bottom: 12px;
+        }}
+        audio {{
+            width: 100%;
+            margin-top: 12px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="embed-player">
+        <img src="{share_url}/cover.jpg" class="cover">
+        <div class="info">
+            <div class="title">{song['title']}</div>
+            <div class="artist">🎵 {song['artist']}</div>
+            <audio controls autoplay>
+                <source src="{share_url}/preview.mp3" type="audio/mpeg">
+            </audio>
+        </div>
+    </div>
+</body>
+</html>"""
+
 @app.route('/share/<int:song_id>/listen')
 def share_song_listen(song_id):
     """Kleine Seite die automatisch die Hörprobe abspielt"""
@@ -3358,25 +3427,53 @@ def share_song_cover(song_id):
         print(f"Cover-Fehler für {song_id}: {e}")
         return create_dynamic_cover(song['title'], song['artist'], 512, 512)
 
-@app.route('/share/<int:song_id>/cover.png')
-def share_song_cover_png(song_id):
-    """Gibt das Cover als PNG für Discord Embeds zurück"""
-    # Verwende die gleiche Logik wie cover, aber gib PNG zurück
-    response = share_song_cover(song_id)
-    if hasattr(response, 'mimetype') and response.mimetype == 'image/jpeg':
-        # Konvertiere JPEG zu PNG
-        try:
-            from PIL import Image
-            import io
+@app.route('/share/<int:song_id>/cover.jpg')
+def share_song_cover_jpg(song_id):
+    """Optimiertes Cover für Discord (JPG, 512x512)"""
+    global playlist
+    if playlist is None:
+        playlist = load_songs_db()
 
-            img = Image.open(io.BytesIO(response.get_data()))
-            output = io.BytesIO()
-            img.save(output, format='PNG')
-            output.seek(0)
-            return Response(output.getvalue(), mimetype='image/png')
-        except:
-            pass
-    return response
+    song = next((s for s in playlist if s['id'] == song_id), None)
+    if not song:
+        return create_dynamic_cover("Song nicht gefunden", "Planetify", 512, 512)
+
+    try:
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], song['filename'])
+        if not os.path.exists(filepath):
+            return create_dynamic_cover(song['title'], song['artist'], 512, 512)
+
+        from mutagen.mp3 import MP3
+        from PIL import Image
+        import io
+
+        audio = MP3(filepath)
+
+        if audio.tags:
+            for tag_name in audio.tags.keys():
+                if 'APIC' in str(tag_name):
+                    pic = audio.tags[tag_name]
+
+                    img = Image.open(io.BytesIO(pic.data))
+
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+
+                    # Resize auf 512x512 für Discord
+                    img = img.resize((512, 512), Image.Resampling.LANCZOS)
+
+                    # Speichere als JPEG
+                    output = io.BytesIO()
+                    img.save(output, format='JPEG', quality=90)
+                    output.seek(0)
+
+                    return Response(output.getvalue(), mimetype='image/jpeg')
+
+        return create_dynamic_cover(song['title'], song['artist'], 512, 512)
+
+    except Exception as e:
+        print(f"Cover-Fehler: {e}")
+        return create_dynamic_cover(song['title'], song['artist'], 512, 512)
 
 @app.route('/share/<int:song_id>/cover.png')
 def share_song_cover_png(song_id):
@@ -3586,7 +3683,7 @@ def embed_test(song_id):
 
 @app.route('/share/<int:song_id>')
 def share_song(song_id):
-    """Gibt nur Open Graph Metadaten für Discord Embeds zurück - keine sichtbare Seite"""
+    """Optimierte Share-Seite mit Discord Audio Embed"""
     global playlist
     if playlist is None:
         playlist = load_songs_db()
@@ -3595,57 +3692,215 @@ def share_song(song_id):
     if not song:
         return "Song nicht gefunden", 404
 
-    # Erstelle die Share-URL
     share_url = f"{BASE_URL}/share/{song_id}"
 
-    # HTML mit Open Graph Metadaten für Discord - nur Metadaten, keine sichtbare Seite
-    share_html = f"""<!DOCTYPE html>
+    # Formatiere Dauer
+    duration_str = f"{song['duration']//60}:{song['duration']%60:02d}"
+
+    return f"""<!DOCTYPE html>
 <html lang="de">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{song['title']} - {song['artist']} | Planetify</title>
 
     <!-- Discord Embed Metadaten -->
-    <meta name="description" content="🎵 {song['artist']} • {song['duration']//60}:{song['duration']%60:02d}">
-
-    <!-- Open Graph für Discord -->
     <meta property="og:type" content="music.song">
     <meta property="og:site_name" content="Planetify">
     <meta property="og:title" content="{song['title']}">
-    <meta property="og:description" content="🎵 {song['artist']} • {song['duration']//60}:{song['duration']%60:02d}
+    <meta property="og:description" content="🎵 {song['artist']}{f' • {song["album"]}' if song.get('album') else ''} • {duration_str}
 
-▶️ **[HÖRPROBE ANHÖREN]({share_url}/listen)**
-🎵 **[SONG SPIELEN]({share_url}/play)**">
+🔊 30-Sekunden Vorschau verfügbar">
     <meta property="og:url" content="{share_url}">
-    <meta property="og:image" content="{share_url}/cover.png?v=4">
+    <meta property="og:image" content="{share_url}/cover.jpg">
     <meta property="og:image:width" content="512">
     <meta property="og:image:height" content="512">
-    <meta property="og:image:type" content="image/png">
-    <meta property="og:image:secure_url" content="{share_url}/cover.png?v=4">
 
-    <!-- Music tags -->
+    <!-- Audio Metadaten für Discord -->
+    <meta property="og:audio" content="{share_url}/preview.mp3">
+    <meta property="og:audio:type" content="audio/mpeg">
+    <meta property="music:duration" content="{song['duration']}">
     <meta property="music:musician" content="{song['artist']}">
-    <meta property="music:song" content="{song['title']}">
-    {f'<meta property="music:album" content="{song["album"]}">' if song.get('album') else ''}
 
-    <!-- Twitter -->
-    <meta name="twitter:card" content="summary_large_image">
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="player">
     <meta name="twitter:title" content="{song['title']}">
-    <meta name="twitter:description" content="🎵 {song['artist']} • Buttons für Hörprobe & Vollversion">
-    <meta name="twitter:image" content="{share_url}/cover.png?v=4">
+    <meta name="twitter:description" content="🎵 {song['artist']} • {duration_str}">
+    <meta name="twitter:image" content="{share_url}/cover.jpg">
+    <meta name="twitter:player" content="{share_url}/embed">
+    <meta name="twitter:player:width" content="480">
+    <meta name="twitter:player:height" content="200">
 
-    <style>body{{display:none}}</style>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: linear-gradient(135deg, #1a0f00 0%, #000 100%);
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }}
+
+        .player-card {{
+            background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+            border: 1px solid #333;
+        }}
+
+        .cover {{
+            width: 100%;
+            aspect-ratio: 1;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            box-shadow: 0 12px 40px rgba(255, 107, 0, 0.3);
+            object-fit: cover;
+            background: linear-gradient(135deg, #ff6b00, #ff3d00);
+        }}
+
+        .song-info {{
+            text-align: center;
+            margin-bottom: 32px;
+        }}
+
+        .song-title {{
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #fff 0%, #b3b3b3 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }}
+
+        .song-artist {{
+            font-size: 18px;
+            color: #b3b3b3;
+        }}
+
+        .audio-player {{
+            width: 100%;
+            margin: 24px 0;
+            padding: 16px;
+            background: #0a0a0a;
+            border-radius: 12px;
+            border: 1px solid #333;
+        }}
+
+        audio {{
+            width: 100%;
+        }}
+
+        .preview-label {{
+            text-align: center;
+            font-size: 13px;
+            color: #ff6b00;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }}
+
+        .buttons {{
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }}
+
+        .btn {{
+            flex: 1;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 24px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }}
+
+        .btn-primary {{
+            background: linear-gradient(135deg, #ff6b00 0%, #ff3d00 100%);
+            color: #fff;
+            box-shadow: 0 4px 20px rgba(255, 107, 0, 0.3);
+        }}
+
+        .btn-primary:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(255, 107, 0, 0.5);
+        }}
+
+        .btn-secondary {{
+            background: transparent;
+            color: #fff;
+            border: 1px solid #535353;
+        }}
+
+        .btn-secondary:hover {{
+            border-color: #fff;
+        }}
+
+        .logo {{
+            text-align: center;
+            margin-top: 32px;
+            font-size: 20px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #ff6b00 0%, #ff3d00 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }}
+    </style>
 </head>
 <body>
-    <!-- Discord lädt nur die Metadaten - keine sichtbare Seite -->
-    <script>
-        // Weiterleitung falls jemand direkt zugreift
-        window.location.href = '/';
-    </script>
+    <div class="player-card">
+        <img src="{share_url}/cover.jpg" alt="{song['title']}" class="cover"
+             onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Crect fill=%22%23ff6b00%22 width=%22100%22 height=%22100%22/%3E%3Ctext x=%2250%22 y=%2250%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22white%22 font-size=%2240%22%3E🎵%3C/text%3E%3C/svg%3E'">
+
+        <div class="song-info">
+            <div class="song-title">{song['title']}</div>
+            <div class="song-artist">🎵 {song['artist']}</div>
+        </div>
+
+        <div class="preview-label">
+            <span>🔊</span>
+            <span>30-Sekunden Hörprobe</span>
+        </div>
+
+        <div class="audio-player">
+            <audio controls autoplay>
+                <source src="{share_url}/preview.mp3" type="audio/mpeg">
+                Dein Browser unterstützt kein Audio.
+            </audio>
+        </div>
+
+        <div class="buttons">
+            <a href="/" class="btn btn-secondary">
+                🏠 Zu Planetify
+            </a>
+            <a href="{share_url}/play" class="btn btn-primary">
+                ▶️ Vollversion spielen
+            </a>
+        </div>
+
+        <div class="logo">PLANETIFY</div>
+    </div>
 </body>
 </html>"""
-
-    return share_html
 
 if __name__ == '__main__':
     threading.Thread(target=init_discord_rpc, daemon=True).start()
