@@ -3294,101 +3294,9 @@ def create_dynamic_cover(title, artist):
         print(f"Dynamic cover error: {e}")
         return send_from_directory('static', 'default_cover.png', mimetype='image/png')
 
-@app.route('/embed_meta/<int:song_id>')
-def embed_meta(song_id):
-    """Gibt die Open Graph Metadaten als JSON zurück für Debugging"""
-    global playlist
-    if playlist is None:
-        playlist = load_songs_db()
-
-    song = next((s for s in playlist if s['id'] == song_id), None)
-    if not song:
-        return jsonify({'error': 'Song nicht gefunden'}), 404
-
-    share_url = f"{BASE_URL}/share/{song_id}"
-
-    return jsonify({
-        'title': song['title'],
-        'artist': song['artist'],
-        'album': song.get('album', ''),
-        'duration': song['duration'],
-        'share_url': share_url,
-        'cover_url': f"{share_url}/cover",
-        'preview_url': f"{share_url}/preview.mp3",
-        'open_graph': {
-            'og:type': 'music.song',
-            'og:site_name': 'Planetify',
-            'og:title': song['title'],
-            'og:description': f"🎵 {song['artist']}{' • ' + song['album'] if song['album'] else ''} • {song['duration']//60}:{song['duration']%60:02d}\n\n▶️ Hörprobe abspielen | 🎧 Auf Planetify hören",
-            'og:url': share_url,
-            'og:image': f"{share_url}/cover",
-            'og:image:width': '512',
-            'og:image:height': '512',
-            'og:image:type': 'image/jpeg',
-            'og:audio': f"{share_url}/preview.mp3",
-            'og:audio:type': 'audio/mpeg',
-            'music:musician': song['artist'],
-            'music:album': song.get('album', ''),
-            'music:song': song['title'],
-            'music:duration': song['duration']
-        }
-    })
-
-@app.route('/test_embed/<int:song_id>')
-def test_embed(song_id):
-    """Test-Route um Discord Embeds zu validieren"""
-    global playlist
-    if playlist is None:
-        playlist = load_songs_db()
-
-    song = next((s for s in playlist if s['id'] == song_id), None)
-    if not song:
-        return "Song nicht gefunden", 404
-
-    share_url = f"{BASE_URL}/share/{song_id}"
-
-    return f"""
-    <h1>🎵 Discord Embed Test</h1>
-    <p><strong>Song:</strong> {song['title']} - {song['artist']}</p>
-    <p><strong>Share URL:</strong> <a href="{share_url}" target="_blank">{share_url}</a></p>
-
-    <h2>📋 Kopiere diesen Link in Discord:</h2>
-    <input type="text" value="{share_url}" readonly style="width: 100%; padding: 10px; font-family: monospace; margin: 10px 0;" onclick="this.select()">
-
-    <h2>🖼️ Cover-Bild:</h2>
-    <img src="{share_url}/cover" style="max-width: 300px; border: 2px solid #ff6b00; border-radius: 8px;">
-
-    <h2>🎧 Hörprobe (30s):</h2>
-    <audio controls style="width: 100%;">
-        <source src="{share_url}/preview.mp3" type="audio/mpeg">
-        Dein Browser unterstützt kein Audio.
-    </audio>
-
-    <h2>📱 Wie das Discord Embed aussehen sollte:</h2>
-    <div style="border: 2px solid #5865F2; border-radius: 8px; padding: 16px; background: #36393f; color: white; font-family: 'Whitney', sans-serif;">
-        <div style="display: flex; gap: 16px;">
-            <img src="{share_url}/cover" style="width: 80px; height: 80px; border-radius: 4px; object-fit: cover;">
-            <div>
-                <div style="font-weight: bold; color: #00b0f4;">Planetify</div>
-                <div style="font-size: 16px; font-weight: 600; margin: 4px 0;">{song['title']}</div>
-                <div style="color: #dcddde;">🎵 {song['artist']}{f" • {song['album']}" if song['album'] else ""} • {song['duration']//60}:{song['duration']%60:02d}</div>
-                <div style="color: #5865f2; font-size: 12px; margin-top: 8px;">
-                    ▶️ <a href="{share_url}/preview.mp3" style="color: #5865f2;">Hörprobe abspielen</a> |
-                    🎧 <a href="{share_url}" style="color: #5865f2;">Auf Planetify hören</a>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <p style="margin-top: 20px; color: #666;">
-        <strong>Hinweis:</strong> Discord zeigt Embeds nur bei öffentlich zugänglichen URLs an.
-        Deploye die App auf Render.com, dann funktionieren die Embeds perfekt!
-    </p>
-    """, 200, {'Content-Type': 'text/html; charset=utf-8'}
-
 @app.route('/share/<int:song_id>')
 def share_song(song_id):
-    """Gibt eine Share-Seite für einen Song zurück mit Discord Embed Metadaten"""
+    """Gibt Open Graph Metadaten für Discord Embeds zurück"""
     global playlist
     if playlist is None:
         playlist = load_songs_db()
@@ -3400,350 +3308,46 @@ def share_song(song_id):
     # Erstelle die Share-URL
     share_url = f"{BASE_URL}/share/{song_id}"
 
-    # HTML mit Open Graph Metadaten für Discord Embeds
+    # Minimal HTML mit Open Graph Metadaten für Discord
     share_html = f"""<!DOCTYPE html>
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{song['title']} - {song['artist']} | Planetify</title>
 
     <!-- Discord Embed Metadaten -->
     <meta name="description" content="🎵 Höre {song['title']} von {song['artist']}{f' • Album: {song["album"]}' if song['album'] else ''} | {song['duration']//60}:{song['duration']%60:02d} | Kostenlose Musik auf Planetify">
 
-    <!-- Open Graph / Facebook -->
+    <!-- Open Graph für Discord -->
     <meta property="og:type" content="music.song">
     <meta property="og:site_name" content="Planetify">
     <meta property="og:title" content="{song['title']}">
-    <meta property="og:description" content="🎵 {song['artist']}{f" • {song['album']}" if song['album'] else ""} • {song['duration']//60}:{song['duration']%60:02d}
-
-▶️ [Hörprobe abspielen]({share_url}/preview.mp3) | 🎧 [Auf Planetify hören]({share_url})">
+    <meta property="og:description" content="🎵 {song['artist']}{f' • {song["album"]}' if song['album'] else ''} • {song['duration']//60}:{song['duration']%60:02d} • Hörprobe verfügbar">
     <meta property="og:url" content="{share_url}">
     <meta property="og:image" content="{share_url}/cover">
     <meta property="og:image:width" content="512">
     <meta property="og:image:height" content="512">
     <meta property="og:image:type" content="image/jpeg">
-    <meta property="og:image:alt" content="Album cover for {song['title']} by {song['artist']}">
 
-    <!-- Audio preview (30 second clip) -->
+    <!-- Audio preview -->
     <meta property="og:audio" content="{share_url}/preview.mp3">
-    <meta property="og:audio:secure_url" content="{share_url}/preview.mp3">
     <meta property="og:audio:type" content="audio/mpeg">
 
-    <!-- Music specific Open Graph tags -->
+    <!-- Music tags -->
     <meta property="music:musician" content="{song['artist']}">
-    <meta property="music:album" content="{song.get('album', '') or ''}">
     <meta property="music:song" content="{song['title']}">
-    <meta property="music:duration" content="{song['duration']}">
+    {f'<meta property="music:album" content="{song["album"]}">' if song.get('album') else ''}
 
-    <!-- Twitter Card -->
+    <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:site" content="@planetify">
     <meta name="twitter:title" content="{song['title']}">
-    <meta name="twitter:description" content="🎵 {song['artist']}{f" • {song['album']}" if song['album'] else ""} | Höre die Vorschau auf Planetify">
-    <meta name="twitter:image" content="{share_url}/cover">
-    <meta name="twitter:image:alt" content="Album cover for {song['title']} by {song['artist']}">
+    <meta name="twitter:description" content="🎵 {song['artist']} • Hörprobe verfügbar">
     <meta name="twitter:image" content="{share_url}/cover">
 
-    <!-- Additional Discord specific meta tags -->
-    <meta name="theme-color" content="#ff6b00">
-    <meta name="color-scheme" content="dark">
-    <link rel="canonical" href="{share_url}">
-
-    <style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
-
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-            background: radial-gradient(ellipse at top, #1a0f00 0%, #000 50%);
-            color: #fff;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }}
-
-        .share-container {{
-            background: linear-gradient(135deg, rgba(255, 107, 0, 0.1), rgba(255, 61, 0, 0.05));
-            border: 1px solid rgba(255, 107, 0, 0.3);
-            border-radius: 20px;
-            padding: 40px;
-            max-width: 600px;
-            width: 100%;
-            text-align: center;
-            box-shadow: 0 20px 60px rgba(255, 107, 0, 0.2);
-            animation: fadeInUp 0.8s ease-out;
-        }}
-
-        @keyframes fadeInUp {{
-            from {{
-                opacity: 0;
-                transform: translateY(30px);
-            }}
-            to {{
-                opacity: 1;
-                transform: translateY(0);
-            }}
-        }}
-
-        .logo {{
-            font-size: 32px;
-            font-weight: 700;
-            background: linear-gradient(135deg, #ff6b00 0%, #ff3d00 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 30px;
-        }}
-
-        .song-cover {{
-            width: 200px;
-            height: 200px;
-            border-radius: 16px;
-            margin: 0 auto 24px;
-            box-shadow: 0 16px 48px rgba(0,0,0,0.6);
-            border: 2px solid rgba(255, 107, 0, 0.3);
-            object-fit: cover;
-            background: linear-gradient(135deg, #ff6b00, #ff3d00);
-        }}
-
-        .song-title {{
-            font-size: 28px;
-            font-weight: 700;
-            margin-bottom: 8px;
-            background: linear-gradient(135deg, #fff 0%, #b3b3b3 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }}
-
-        .song-artist {{
-            font-size: 18px;
-            color: #b3b3b3;
-            margin-bottom: 16px;
-        }}
-
-        .song-album {{
-            font-size: 16px;
-            color: #888;
-            margin-bottom: 30px;
-        }}
-
-        .share-actions {{
-            display: flex;
-            gap: 16px;
-            justify-content: center;
-            margin-bottom: 24px;
-        }}
-
-        .share-btn {{
-            background: linear-gradient(135deg, #5865F2 0%, #4752C4 100%);
-            color: #fff;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 24px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            text-decoration: none;
-            box-shadow: 0 4px 16px rgba(88, 101, 242, 0.3);
-        }}
-
-        .share-btn:hover {{
-            transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(88, 101, 242, 0.5);
-        }}
-
-        .listen-btn {{
-            background: linear-gradient(135deg, #ff6b00 0%, #ff3d00 100%);
-            box-shadow: 0 4px 16px rgba(255, 107, 0, 0.3);
-        }}
-
-        .listen-btn:hover {{
-            box-shadow: 0 8px 24px rgba(255, 107, 0, 0.5);
-        }}
-
-        .share-info {{
-            background: rgba(0,0,0,0.3);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 12px;
-            padding: 20px;
-            font-size: 14px;
-            color: #b3b3b3;
-        }}
-
-        .share-info h3 {{
-            color: #fff;
-            margin-bottom: 12px;
-            font-size: 16px;
-        }}
-
-        .preview-section {{
-            background: linear-gradient(135deg, rgba(255, 107, 0, 0.1), rgba(255, 61, 0, 0.05));
-            border: 1px solid rgba(255, 107, 0, 0.3);
-            border-radius: 12px;
-            padding: 16px;
-            margin: 16px 0;
-            text-align: center;
-        }}
-
-        .preview-section h4 {{
-            color: #fff;
-            margin-bottom: 8px;
-            font-size: 14px;
-        }}
-
-        .preview-player {{
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 12px;
-            margin-top: 12px;
-        }}
-
-        .preview-btn {{
-            background: linear-gradient(135deg, #ff6b00, #ff3d00);
-            color: #fff;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            transition: all 0.2s;
-        }}
-
-        .preview-btn:hover {{
-            transform: scale(1.05);
-        }}
-
-        .pulse-animation {{
-            animation: pulse 2s infinite;
-        }}
-
-        @keyframes pulse {{
-            0%, 100% {{ opacity: 1; transform: scale(1); }}
-            50% {{ opacity: 0.7; transform: scale(0.98); }}
-        }}
-    </style>
+    <style>body{{display:none}}</style>
 </head>
 <body>
-    <div class="share-container">
-        <div class="logo">PLANETIFY</div>
-
-        <img src="/cover/{song['filename']}" alt="{song['title']}" class="song-cover pulse-animation"
-             onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 200 200%22%3E%3Crect fill=%22%23ff6b00%22 width=%22200%22 height=%22200%22 rx=%2216%22/%3E%3Ctext x=%22100%22 y=%22100%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22white%22 font-size=%2260%22%3E🎵%3C/text%3E%3C/svg%3E'">
-
-        <h1 class="song-title">{song['title']}</h1>
-        <div class="song-artist">von {song['artist']}</div>
-        {f'<div class="song-album">{song["album"]}</div>' if song['album'] else ""}
-
-            <div class="share-actions">
-                <button class="share-btn" onclick="shareOnDiscord()">
-                    📱 In Discord teilen
-                </button>
-                <a href="/" class="share-btn listen-btn">
-                    🎧 Auf Planetify hören
-                </a>
-            </div>
-
-            <div class="preview-section">
-                <h4>🎵 Hörprobe anhören</h4>
-                <p style="font-size: 13px; color: #b3b3b3; margin-bottom: 12px;">30 Sekunden Vorschau des Songs - direkt in Discord abspielbar!</p>
-                <div class="preview-player">
-                    <button class="preview-btn" onclick="togglePreview()" id="previewBtn">
-                        <span id="previewIcon">▶️</span>
-                        Vorschau abspielen
-                    </button>
-                    <a href="{share_url}/preview.mp3" class="preview-btn" style="margin-left: 8px; background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);" target="_blank">
-                        🎧 In Discord hören
-                    </a>
-                </div>
-                <audio id="previewAudio" style="display: none;" onended="onPreviewEnded()">
-                    <source src="{share_url}/preview.mp3" type="audio/mpeg">
-                </audio>
-                <p style="font-size: 11px; color: #666; margin-top: 8px;">
-                    💡 Tipp: Der "In Discord hören" Link kann direkt in Discord geteilt werden und ist dort abspielbar!
-                </p>
-            </div>
-
-            <div class="share-info">
-                <h3>🎉 Song teilen</h3>
-                <p>Teile diesen Song-Link in Discord oder anderen sozialen Medien. Der Link zeigt ein ansprechendes Embed mit Album-Cover, Song-Informationen und einer 30-Sekunden Hörprobe an.</p>
-                <p style="font-size: 13px; color: #b3b3b3; margin-top: 8px;">
-                    🎧 <strong>Hörprobe in Discord:</strong> Die 30-Sekunden Vorschau ist direkt in Discord abspielbar - einfach den Link teilen!
-                </p>
-                <p style="font-size: 12px; margin-top: 8px; color: #888;">
-                    <strong>Test-Link:</strong> <a href="/test_embed/{song_id}" target="_blank" style="color: #ff6b00;">Embed-Vorschau ansehen</a>
-                </p>
-            </div>
-    </div>
-
-    <script>
-        let previewPlaying = false;
-
-        function togglePreview() {{
-            const audio = document.getElementById('previewAudio');
-            const btn = document.getElementById('previewBtn');
-            const icon = document.getElementById('previewIcon');
-
-            if (previewPlaying) {{
-                audio.pause();
-                audio.currentTime = 0;
-                icon.textContent = '▶️';
-                btn.innerHTML = '<span id="previewIcon">▶️</span> Vorschau abspielen';
-                previewPlaying = false;
-            }} else {{
-                audio.play().catch(e => {{
-                    console.log('Preview play error:', e);
-                    alert('Vorschau konnte nicht geladen werden. Versuche es später nochmal.');
-                }});
-                icon.textContent = '⏸️';
-                btn.innerHTML = '<span id="previewIcon">⏸️</span> Wiedergabe läuft...';
-                previewPlaying = true;
-            }}
-        }}
-
-        function onPreviewEnded() {{
-            const btn = document.getElementById('previewBtn');
-            const icon = document.getElementById('previewIcon');
-            icon.textContent = '▶️';
-            btn.innerHTML = '<span id="previewIcon">▶️</span> 30s Vorschau';
-            previewPlaying = false;
-        }}
-
-        function shareOnDiscord() {{
-            // Kopiere Link in Zwischenablage
-            navigator.clipboard.writeText(window.location.href).then(() => {{
-                alert('✅ Link kopiert! Teile ihn jetzt in Discord oder anderen sozialen Medien.');
-            }}).catch(() => {{
-                // Fallback für ältere Browser
-                const textArea = document.createElement('textarea');
-                textArea.value = window.location.href;
-                document.body.appendChild(textArea);
-                textArea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textArea);
-                alert('✅ Link kopiert! Teile ihn jetzt in Discord oder anderen sozialen Medien.');
-            }});
-        }}
-
-        // Automatische Weiterleitung nach 3 Sekunden (optional)
-        // setTimeout(() => {{
-        //     window.location.href = '/';
-        // }}, 3000);
-    </script>
+    <!-- Discord lädt nur die Metadaten, keine sichtbare Seite -->
 </body>
 </html>"""
 
