@@ -3105,9 +3105,19 @@ def scan_metadata():
         'errors': errors
     })
 
-@app.route('/share/<int:song_id>/play')
-def share_play(song_id):
-    """Vollversion abspielen"""
+
+
+
+
+
+
+
+
+# ERSETZE die /share/ Route mit dieser Version für schöne Discord-Embeds
+
+@app.route('/share/<int:song_id>')
+def share_song(song_id):
+    """Discord Rich Embed mit Bild und Beschreibung"""
     global playlist
     if playlist is None:
         playlist = load_songs_db()
@@ -3117,40 +3127,216 @@ def share_play(song_id):
         return "Song nicht gefunden", 404
 
     share_url = f"{BASE_URL}/share/{song_id}"
+    duration_str = f"{song['duration']//60}:{song['duration']%60:02d}"
 
-    return f"""<!DOCTYPE html>
-<html lang="de">
+    # Escape für HTML
+    title = song['title'].replace('"', '&quot;').replace("'", '&#39;')
+    artist = song['artist'].replace('"', '&quot;').replace("'", '&#39;')
+    album = song.get('album', '').replace('"', '&quot;').replace("'", '&#39;')
+
+    # Schöne Beschreibung mit Emojis und Links
+    description = f"""🎵 **{artist}**{' • ' + album if album else ''}
+⏱️ {duration_str}
+
+🔊 [▶️ Hörprobe anhören]({share_url}/preview)
+🎧 [💿 Vollversion abspielen]({share_url}/play)"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="de" prefix="og: http://ogp.me/ns#">
 <head>
     <meta charset="UTF-8">
-    <title>{song['title']} - Vollversion</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>{title} - {artist} | Planetify</title>
+
+    <!-- Discord Rich Embed -->
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Planetify">
+    <meta property="og:title" content="{title}">
+    <meta property="og:description" content="{description}">
+    <meta property="og:url" content="{share_url}">
+    <meta property="og:image" content="{share_url}/cover.jpg">
+    <meta property="og:image:secure_url" content="{share_url}/cover.jpg">
+    <meta property="og:image:type" content="image/jpeg">
+    <meta property="og:image:width" content="512">
+    <meta property="og:image:height" content="512">
+    <meta property="og:image:alt" content="{title} - Album Cover">
+
+    <!-- Theme Color für Discord -->
+    <meta name="theme-color" content="#ff6b00">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{title}">
+    <meta name="twitter:description" content="🎵 {artist} • {duration_str}">
+    <meta name="twitter:image" content="{share_url}/cover.jpg">
+
     <style>
-        body{{background:#000;color:#fff;font-family:Arial;text-align:center;padding:40px}}
-        .player{{max-width:400px;margin:0 auto;background:#1a1a1a;padding:30px;border-radius:12px}}
-        h2{{margin-bottom:10px}}
-        audio{{width:100%;margin:20px 0}}
-        .btn{{display:inline-block;margin-top:20px;padding:12px 24px;background:#ff6b00;color:#fff;
-             text-decoration:none;border-radius:24px;font-weight:600}}
-        .btn:hover{{background:#ff3d00}}
+        * {{margin:0;padding:0;box-sizing:border-box}}
+        body {{
+            font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+            background:linear-gradient(135deg,#1a0f00 0%,#000 100%);
+            color:#fff;
+            min-height:100vh;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            padding:20px
+        }}
+        .card {{
+            background:linear-gradient(135deg,#1a1a1a 0%,#0d0d0d 100%);
+            border-radius:20px;
+            padding:40px;
+            max-width:500px;
+            width:100%;
+            box-shadow:0 20px 60px rgba(0,0,0,.8);
+            border:1px solid #333;
+            animation:fadeIn 0.5s ease-out
+        }}
+        @keyframes fadeIn {{from{{opacity:0;transform:translateY(20px)}}to{{opacity:1;transform:translateY(0)}}}}
+        .cover {{
+            width:100%;
+            aspect-ratio:1;
+            border-radius:12px;
+            margin-bottom:24px;
+            box-shadow:0 12px 40px rgba(255,107,0,.4);
+            object-fit:cover;
+            transition:transform 0.3s ease
+        }}
+        .cover:hover {{transform:scale(1.05)}}
+        .title {{
+            font-size:28px;
+            font-weight:700;
+            margin-bottom:8px;
+            text-align:center;
+            background:linear-gradient(135deg,#fff 0%,#b3b3b3 100%);
+            -webkit-background-clip:text;
+            -webkit-text-fill-color:transparent;
+            line-height:1.3
+        }}
+        .artist {{
+            font-size:18px;
+            color:#b3b3b3;
+            text-align:center;
+            margin-bottom:8px
+        }}
+        .duration {{
+            font-size:14px;
+            color:#ff6b00;
+            text-align:center;
+            margin-bottom:32px;
+            font-weight:600
+        }}
+        .buttons {{
+            display:grid;
+            gap:12px;
+            margin-bottom:24px
+        }}
+        .btn {{
+            padding:16px 24px;
+            border:none;
+            border-radius:12px;
+            font-size:15px;
+            font-weight:600;
+            cursor:pointer;
+            text-decoration:none;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            gap:10px;
+            transition:all 0.3s;
+            text-align:center
+        }}
+        .btn-preview {{
+            background:linear-gradient(135deg,#ff6b00 0%,#ff3d00 100%);
+            color:#fff;
+            box-shadow:0 4px 20px rgba(255,107,0,.4);
+            font-size:16px
+        }}
+        .btn-preview:hover {{
+            transform:translateY(-2px);
+            box-shadow:0 8px 30px rgba(255,107,0,.6)
+        }}
+        .btn-play {{
+            background:rgba(255,255,255,0.1);
+            color:#fff;
+            border:1px solid rgba(255,255,255,0.2);
+            backdrop-filter:blur(10px)
+        }}
+        .btn-play:hover {{
+            background:rgba(255,255,255,0.15);
+            border-color:rgba(255,255,255,0.3)
+        }}
+        .btn-home {{
+            background:transparent;
+            color:#b3b3b3;
+            border:1px solid #333;
+            font-size:13px
+        }}
+        .btn-home:hover {{
+            color:#fff;
+            border-color:#535353
+        }}
+        .logo {{
+            text-align:center;
+            margin-top:24px;
+            font-size:18px;
+            font-weight:700;
+            background:linear-gradient(135deg,#ff6b00 0%,#ff3d00 100%);
+            -webkit-background-clip:text;
+            -webkit-text-fill-color:transparent;
+            opacity:0.7
+        }}
+        .info {{
+            background:rgba(255,107,0,0.1);
+            border:1px solid rgba(255,107,0,0.3);
+            border-radius:8px;
+            padding:12px;
+            margin-bottom:20px;
+            font-size:13px;
+            text-align:center;
+            color:#ff6b00
+        }}
     </style>
 </head>
 <body>
-    <div class="player">
-        <h2>{song['title']}</h2>
-        <p>von {song['artist']}</p>
-        <audio controls autoplay>
-            <source src="/stream/{song['filename']}" type="audio/mpeg">
-        </audio>
-        <p><small>Vollversion</small></p>
-        <a href="/" class="btn">🏠 Zurück zu Planetify</a>
+    <div class="card">
+        <img src="{share_url}/cover.jpg" alt="{title}" class="cover">
+
+        <div class="title">{title}</div>
+        <div class="artist">🎵 {artist}</div>
+        <div class="duration">⏱️ {duration_str}</div>
+
+        <div class="info">
+            🔊 Klicke auf die Buttons unten für Audio
+        </div>
+
+        <div class="buttons">
+            <a href="{share_url}/preview" class="btn btn-preview">
+                ▶️ 30-Sekunden Hörprobe
+            </a>
+            <a href="{share_url}/play" class="btn btn-play">
+                💿 Vollversion abspielen
+            </a>
+            <a href="/" class="btn btn-home">
+                🏠 Zurück zu Planetify
+            </a>
+        </div>
+
+        <div class="logo">PLANETIFY</div>
     </div>
 </body>
 </html>"""
 
+    return html, 200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-cache, no-store, must-revalidate'
+    }
 
 
-@app.route('/share/<int:song_id>/preview.mp3')
-def share_preview(song_id):
-    """30-Sekunden Audio-Vorschau"""
+@app.route('/share/<int:song_id>/preview')
+def share_preview_page(song_id):
+    """30-Sekunden Hörprobe mit Auto-Play"""
     global playlist
     if playlist is None:
         playlist = load_songs_db()
@@ -3159,65 +3345,123 @@ def share_preview(song_id):
     if not song:
         return "Song nicht gefunden", 404
 
-    filepath = os.path.join(app.config['UPLOAD_FOLDER'], song['filename'])
-    if not os.path.exists(filepath):
-        return "Datei nicht gefunden", 404
+    share_url = f"{BASE_URL}/share/{song_id}"
+    title = song['title'].replace('"', '&quot;')
+    artist = song['artist'].replace('"', '&quot;')
 
-    # Cache-Datei
-    preview_path = os.path.join(app.config['UPLOAD_FOLDER'], f'.preview_{song["filename"]}')
+    return f"""<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title} - Hörprobe</title>
+    <style>
+        * {{margin:0;padding:0;box-sizing:border-box}}
+        body {{
+            font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+            background:linear-gradient(135deg,#1a0f00 0%,#000 100%);
+            color:#fff;
+            min-height:100vh;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            padding:20px
+        }}
+        .player {{
+            background:linear-gradient(135deg,#1a1a1a 0%,#0d0d0d 100%);
+            border-radius:20px;
+            padding:40px;
+            max-width:400px;
+            width:100%;
+            box-shadow:0 20px 60px rgba(0,0,0,.8);
+            border:1px solid #333;
+            text-align:center
+        }}
+        .cover {{
+            width:200px;
+            height:200px;
+            border-radius:12px;
+            margin:0 auto 24px;
+            box-shadow:0 12px 40px rgba(255,107,0,.4);
+            object-fit:cover;
+            animation:pulse 2s infinite
+        }}
+        @keyframes pulse {{
+            0%,100%{{transform:scale(1)}}
+            50%{{transform:scale(1.05)}}
+        }}
+        h2 {{
+            font-size:24px;
+            margin-bottom:8px;
+            background:linear-gradient(135deg,#fff 0%,#b3b3b3 100%);
+            -webkit-background-clip:text;
+            -webkit-text-fill-color:transparent
+        }}
+        .artist {{
+            font-size:16px;
+            color:#b3b3b3;
+            margin-bottom:24px
+        }}
+        .label {{
+            background:rgba(255,107,0,0.2);
+            border:1px solid rgba(255,107,0,0.4);
+            border-radius:8px;
+            padding:12px;
+            margin-bottom:20px;
+            font-size:14px;
+            color:#ff6b00;
+            font-weight:600
+        }}
+        audio {{
+            width:100%;
+            margin-bottom:24px;
+            filter:sepia(20%) saturate(70%) grayscale(1) contrast(99%) invert(12%)
+        }}
+        audio::-webkit-media-controls-panel {{
+            background-color:#1a1a1a
+        }}
+        .btn {{
+            display:inline-block;
+            padding:12px 32px;
+            background:linear-gradient(135deg,#ff6b00 0%,#ff3d00 100%);
+            color:#fff;
+            text-decoration:none;
+            border-radius:24px;
+            font-weight:600;
+            transition:all 0.3s;
+            margin:8px
+        }}
+        .btn:hover {{
+            transform:translateY(-2px);
+            box-shadow:0 8px 30px rgba(255,107,0,.5)
+        }}
+        .btn-secondary {{
+            background:transparent;
+            border:1px solid #535353
+        }}
+        .btn-secondary:hover {{
+            border-color:#fff;
+            box-shadow:0 4px 16px rgba(255,255,255,.2)
+        }}
+    </style>
+</head>
+<body>
+    <div class="player">
+        <img src="{share_url}/cover.jpg" alt="{title}" class="cover">
+        <h2>{title}</h2>
+        <div class="artist">🎵 {artist}</div>
+        <div class="label">🔊 30-Sekunden Hörprobe</div>
+        <audio controls autoplay>
+            <source src="{share_url}/preview.mp3" type="audio/mpeg">
+        </audio>
+        <a href="{share_url}/play" class="btn">💿 Vollversion</a><br>
+        <a href="{share_url}" class="btn btn-secondary">← Zurück</a>
+    </div>
+</body>
+</html>"""
 
-    # Verwende Cache wenn vorhanden
-    if os.path.exists(preview_path):
-        return send_from_directory(
-            os.path.dirname(preview_path),
-            os.path.basename(preview_path),
-            mimetype='audio/mpeg'
-        )
 
-    # Erstelle Preview mit ffmpeg
-    try:
-        import subprocess
-        import tempfile
-        import shutil
-
-        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as tmp:
-            temp_path = tmp.name
-
-        cmd = [
-            'ffmpeg', '-i', filepath,
-            '-ss', '0', '-t', '30',
-            '-acodec', 'libmp3lame',
-            '-b:a', '128k',
-            '-y', temp_path
-        ]
-
-        result = subprocess.run(cmd, capture_output=True, timeout=60)
-
-        if result.returncode == 0 and os.path.exists(temp_path):
-            shutil.copy2(temp_path, preview_path)
-
-            with open(temp_path, 'rb') as f:
-                data = f.read()
-
-            os.unlink(temp_path)
-
-            return Response(
-                data,
-                mimetype='audio/mpeg',
-                headers={'Cache-Control': 'public, max-age=86400'}
-            )
-        else:
-            raise Exception(f"FFmpeg failed: {result.stderr}")
-
-    except Exception as e:
-        print(f"Preview error: {e}")
-        # Fallback: Original-Datei
-        return send_from_directory(
-            app.config['UPLOAD_FOLDER'],
-            song['filename'],
-            mimetype='audio/mpeg'
-        )
-
+# Cover und Preview Routes bleiben gleich wie vorher
 @app.route('/share/<int:song_id>/cover.jpg')
 def share_cover(song_id):
     """Cover-Bild für Discord (512x512 JPG)"""
@@ -3265,6 +3509,74 @@ def share_cover(song_id):
     except Exception as e:
         print(f"Cover error: {e}")
         return create_dynamic_cover(song['title'], song['artist'], 512, 512)
+
+
+@app.route('/share/<int:song_id>/preview.mp3')
+def share_preview_mp3(song_id):
+    """30-Sekunden Audio-Vorschau"""
+    global playlist
+    if playlist is None:
+        playlist = load_songs_db()
+
+    song = next((s for s in playlist if s['id'] == song_id), None)
+    if not song:
+        return "Song nicht gefunden", 404
+
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], song['filename'])
+    if not os.path.exists(filepath):
+        return "Datei nicht gefunden", 404
+
+    preview_path = os.path.join(app.config['UPLOAD_FOLDER'], f'.preview_{song["filename"]}')
+
+    if os.path.exists(preview_path):
+        return send_from_directory(
+            os.path.dirname(preview_path),
+            os.path.basename(preview_path),
+            mimetype='audio/mpeg'
+        )
+
+    try:
+        import subprocess
+        import tempfile
+        import shutil
+
+        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as tmp:
+            temp_path = tmp.name
+
+        cmd = [
+            'ffmpeg', '-i', filepath,
+            '-ss', '0', '-t', '30',
+            '-acodec', 'libmp3lame',
+            '-b:a', '128k',
+            '-y', temp_path
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, timeout=60)
+
+        if result.returncode == 0 and os.path.exists(temp_path):
+            shutil.copy2(temp_path, preview_path)
+
+            with open(temp_path, 'rb') as f:
+                data = f.read()
+
+            os.unlink(temp_path)
+
+            return Response(
+                data,
+                mimetype='audio/mpeg',
+                headers={'Cache-Control': 'public, max-age=86400'}
+            )
+        else:
+            raise Exception(f"FFmpeg failed")
+
+    except Exception as e:
+        print(f"Preview error: {e}")
+        return send_from_directory(
+            app.config['UPLOAD_FOLDER'],
+            song['filename'],
+            mimetype='audio/mpeg'
+        )
+
 
 def create_dynamic_cover(title, artist, width=512, height=512):
     """Erstellt ein dynamisches Cover für Songs ohne Cover"""
@@ -3338,189 +3650,6 @@ def create_dynamic_cover(title, artist, width=512, height=512):
         print(f"Dynamic cover error: {e}")
         return send_from_directory('static', 'default_cover.jpg', mimetype='image/jpeg')
 
-
-@app.route('/share/<int:song_id>')
-def share_song(song_id):
-    """Discord-optimierter Share-Link mit Audio Preview"""
-    global playlist
-    if playlist is None:
-        playlist = load_songs_db()
-
-    song = next((s for s in playlist if s['id'] == song_id), None)
-    if not song:
-        return "Song nicht gefunden", 404
-
-    share_url = f"{BASE_URL}/share/{song_id}"
-    duration_str = f"{song['duration']//60}:{song['duration']%60:02d}"
-
-    # Escape Anführungszeichen in Texten
-    title = song['title'].replace('"', '&quot;')
-    artist = song['artist'].replace('"', '&quot;')
-    album = song.get('album', '').replace('"', '&quot;')
-
-    html = f"""<!DOCTYPE html>
-<html lang="de" prefix="og: http://ogp.me/ns#">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <!-- Titel für Browser -->
-    <title>{title} - {artist}</title>
-
-    <!-- Discord/Facebook Open Graph Tags -->
-    <meta property="og:type" content="music.song">
-    <meta property="og:site_name" content="Planetify">
-    <meta property="og:title" content="{title}">
-    <meta property="og:description" content="🎵 {artist}{' • ' + album if album else ''} • {duration_str}">
-    <meta property="og:url" content="{share_url}">
-    <meta property="og:image" content="{share_url}/cover.jpg">
-    <meta property="og:image:secure_url" content="{share_url}/cover.jpg">
-    <meta property="og:image:type" content="image/jpeg">
-    <meta property="og:image:width" content="512">
-    <meta property="og:image:height" content="512">
-    <meta property="og:audio" content="{share_url}/preview.mp3">
-    <meta property="og:audio:secure_url" content="{share_url}/preview.mp3">
-    <meta property="og:audio:type" content="audio/mpeg">
-    <meta property="music:duration" content="{song['duration']}">
-    <meta property="music:musician" content="{artist}">
-
-    <!-- Twitter Card -->
-    <meta name="twitter:card" content="player">
-    <meta name="twitter:site" content="@planetify">
-    <meta name="twitter:title" content="{title}">
-    <meta name="twitter:description" content="🎵 {artist} • {duration_str}">
-    <meta name="twitter:image" content="{share_url}/cover.jpg">
-    <meta name="twitter:player" content="{share_url}/player">
-    <meta name="twitter:player:width" content="480">
-    <meta name="twitter:player:height" content="270">
-
-    <style>
-        * {{margin:0;padding:0;box-sizing:border-box}}
-        body {{
-            font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-            background:linear-gradient(135deg,#1a0f00 0%,#000 100%);
-            color:#fff;
-            min-height:100vh;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            padding:20px
-        }}
-        .card {{
-            background:linear-gradient(135deg,#1a1a1a 0%,#0d0d0d 100%);
-            border-radius:20px;
-            padding:40px;
-            max-width:500px;
-            width:100%;
-            box-shadow:0 20px 60px rgba(0,0,0,.8);
-            border:1px solid #333
-        }}
-        .cover {{
-            width:100%;
-            aspect-ratio:1;
-            border-radius:12px;
-            margin-bottom:24px;
-            box-shadow:0 12px 40px rgba(255,107,0,.3);
-            object-fit:cover
-        }}
-        .title {{
-            font-size:28px;
-            font-weight:700;
-            margin-bottom:8px;
-            text-align:center;
-            background:linear-gradient(135deg,#fff 0%,#b3b3b3 100%);
-            -webkit-background-clip:text;
-            -webkit-text-fill-color:transparent
-        }}
-        .artist {{
-            font-size:18px;
-            color:#b3b3b3;
-            text-align:center;
-            margin-bottom:32px
-        }}
-        .player {{
-            background:#0a0a0a;
-            border-radius:12px;
-            padding:16px;
-            border:1px solid #333
-        }}
-        audio {{width:100%}}
-        .label {{
-            text-align:center;
-            font-size:13px;
-            color:#ff6b00;
-            margin-bottom:16px
-        }}
-        .buttons {{
-            display:flex;
-            gap:12px;
-            margin-top:24px
-        }}
-        .btn {{
-            flex:1;
-            padding:14px 24px;
-            border:none;
-            border-radius:24px;
-            font-size:14px;
-            font-weight:600;
-            cursor:pointer;
-            text-decoration:none;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            gap:8px;
-            transition:all .3s
-        }}
-        .btn-primary {{
-            background:linear-gradient(135deg,#ff6b00 0%,#ff3d00 100%);
-            color:#fff;
-            box-shadow:0 4px 20px rgba(255,107,0,.3)
-        }}
-        .btn-primary:hover {{
-            transform:translateY(-2px);
-            box-shadow:0 8px 30px rgba(255,107,0,.5)
-        }}
-        .btn-secondary {{
-            background:transparent;
-            color:#fff;
-            border:1px solid #535353
-        }}
-        .btn-secondary:hover {{border-color:#fff}}
-        .logo {{
-            text-align:center;
-            margin-top:32px;
-            font-size:20px;
-            font-weight:700;
-            background:linear-gradient(135deg,#ff6b00 0%,#ff3d00 100%);
-            -webkit-background-clip:text;
-            -webkit-text-fill-color:transparent
-        }}
-    </style>
-</head>
-<body>
-    <div class="card">
-        <img src="{share_url}/cover.jpg" alt="{title}" class="cover">
-        <div class="title">{title}</div>
-        <div class="artist">🎵 {artist}</div>
-        <div class="label">🔊 30-Sekunden Hörprobe</div>
-        <div class="player">
-            <audio controls autoplay>
-                <source src="{share_url}/preview.mp3" type="audio/mpeg">
-            </audio>
-        </div>
-        <div class="buttons">
-            <a href="/" class="btn btn-secondary">🏠 Zu Planetify</a>
-            <a href="{share_url}/play" class="btn btn-primary">▶️ Vollversion</a>
-        </div>
-        <div class="logo">PLANETIFY</div>
-    </div>
-</body>
-</html>"""
-
-    return html, 200, {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'public, max-age=3600'
-    }
 
 if __name__ == '__main__':
     threading.Thread(target=init_discord_rpc, daemon=True).start()

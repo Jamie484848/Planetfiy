@@ -9,3 +9,4 @@ python-socketio
 eventlet
 yt-dlp
 spotdl
+Pillow
