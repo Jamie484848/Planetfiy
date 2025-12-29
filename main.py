@@ -882,6 +882,11 @@ HTML_TEMPLATE = """
             margin-top: 8px;
         }
 
+        .disabled-btn {
+            opacity: 0.5 !important;
+            cursor: not-allowed !important;
+        }
+
         .main-content {
             flex: 1;
             background: radial-gradient(ellipse at top, #1a0f00 0%, #000 50%);
@@ -1653,6 +1658,13 @@ HTML_TEMPLATE = """
                 </div>
             </div>
 
+            <div class="metadata-section" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #1a1a1a;">
+                <button class="sync-btn{% if not MUTAGEN_AVAILABLE %} disabled-btn{% endif %}" onclick="scanMetadata()" id="scanBtn" style="width: 100%; background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);">
+                    🔄 Metadaten scannen{% if not MUTAGEN_AVAILABLE %} (Nicht verfügbar){% endif %}
+                </button>
+                <div class="sync-status" id="scanStatus" style="display: none; margin-top: 8px; font-size: 12px; text-align: center;"></div>
+            </div>
+
             <div class="sync-section">
                 <button class="sync-btn" onclick="createListeningSession()">
                     🎧 Session erstellen
@@ -1837,9 +1849,9 @@ HTML_TEMPLATE = """
     <!-- Share Modal -->
     <div class="modal" id="shareModal">
         <div class="modal-content" style="max-width: 700px;">
-            <div class="modal-header">🎉 Song teilen</div>
+            <div class="modal-header">Song teilen</div>
             <p style="color: #b3b3b3; margin-bottom: 24px; text-align: center;">
-                Teile diesen Song-Link in sozialen Medien oder mit Freunden. Er enthält alle wichtigen Informationen und eine Hörprobe.
+                Teile diesen Song-Link in sozialen Medien oder mit Freunden.
             </p>
 
             <!-- Discord Embed Preview -->
@@ -1891,6 +1903,7 @@ HTML_TEMPLATE = """
 
     <script>
         const BASE_URL = "{{ BASE_URL }}";
+        const MUTAGEN_AVAILABLE = {{ 'true' if MUTAGEN_AVAILABLE else 'false' }};
         const audioPlayer = document.getElementById('audioPlayer');
         let playlist = [];
         let currentTrackIndex = -1;
@@ -2144,10 +2157,72 @@ HTML_TEMPLATE = """
             document.getElementById('nextBtn').disabled = false;
             document.getElementById('playPauseBtn').disabled = false;
             document.getElementById('progressContainer').style.pointerEvents = 'auto';
-            
+
             document.querySelectorAll('.song-card').forEach(card => {
                 card.style.pointerEvents = 'auto';
                 card.style.opacity = '1';
+            });
+        }
+
+        function scanMetadata() {
+            const btn = document.getElementById('scanBtn');
+            const status = document.getElementById('scanStatus');
+
+            // Prüfen ob mutagen verfügbar ist
+            if (!MUTAGEN_AVAILABLE) {
+                status.style.display = 'block';
+                status.style.color = '#f44336';
+                status.textContent = '❌ Metadaten-Scan nicht verfügbar (mutagen nicht installiert)';
+                return;
+            }
+
+            // Button deaktivieren und Status zeigen
+            btn.disabled = true;
+            btn.textContent = '🔄 Scanne...';
+            status.style.display = 'block';
+            status.textContent = 'Scanne Metadaten aller Songs...';
+            status.style.color = '#b3b3b3';
+
+            fetch('/scan_metadata', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    status.style.color = '#4CAF50';
+                    status.textContent = `✓ ${data.updated} von ${data.total} Songs aktualisiert`;
+
+                    if (data.errors && data.errors.length > 0) {
+                        console.log('Scan-Fehler:', data.errors);
+                        status.textContent += ` (${data.errors.length} Fehler)`;
+                    }
+
+                    // Playlist neu laden nach kurzer Verzögerung
+                    setTimeout(() => {
+                        loadPlaylist();
+                        console.log('Playlist nach Metadaten-Scan neu geladen');
+                    }, 1500);
+
+                } else {
+                    status.style.color = '#f44336';
+                    status.textContent = '❌ Fehler: ' + (data.error || 'Unbekannter Fehler');
+                }
+            })
+            .catch(err => {
+                console.error('Scan error:', err);
+                status.style.color = '#f44336';
+                status.textContent = '❌ Netzwerkfehler beim Scannen';
+            })
+            .finally(() => {
+                // Button wieder aktivieren
+                btn.disabled = false;
+                btn.textContent = '🔄 Metadaten scannen';
+
+                // Status nach 5 Sekunden ausblenden
+                setTimeout(() => {
+                    status.style.display = 'none';
+                }, 5000);
             });
         }
 
@@ -2725,7 +2800,7 @@ HTML_TEMPLATE = """
 
 @app.route('/')
 def index():
-    return render_template_string(HTML_TEMPLATE, BASE_URL=BASE_URL)
+    return render_template_string(HTML_TEMPLATE, BASE_URL=BASE_URL, MUTAGEN_AVAILABLE=MUTAGEN_AVAILABLE)
 
 @app.route('/playlist')
 def get_playlist():
@@ -2958,18 +3033,74 @@ def pause():
 def update_time():
     data = request.get_json()
     player_state['current_time'] = data['time']
-    
+
     if 'is_playing' in data:
         old_state = player_state['is_playing']
         player_state['is_playing'] = data['is_playing']
-        
+
         if old_state != player_state['is_playing']:
             update_discord_presence()
-    
+
     if 'duration' in data and player_state['current_track_index'] >= 0:
         playlist[player_state['current_track_index']]['duration'] = data['duration']
-    
+
     return jsonify({'success': True})
+
+@app.route('/scan_metadata', methods=['POST'])
+def scan_metadata():
+    """Scannt alle Songs und aktualisiert Titel und Artist aus den Datei-Metadaten"""
+    if not MUTAGEN_AVAILABLE:
+        return jsonify({'error': 'Mutagen ist nicht installiert. Metadaten-Scan nicht verfügbar.'}), 400
+
+    global playlist
+    if playlist is None:
+        playlist = load_songs_db()
+
+    updated_count = 0
+    errors = []
+
+    for song in playlist:
+        try:
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], song['filename'])
+            if os.path.exists(filepath):
+                # Extrahiere frische Metadaten
+                metadata = extract_metadata(filepath)
+
+                # Aktualisiere Song-Daten nur wenn sich etwas geändert hat
+                changed = False
+                if song['title'] != metadata['title']:
+                    song['title'] = metadata['title']
+                    changed = True
+                if song['artist'] != metadata['artist']:
+                    song['artist'] = metadata['artist']
+                    changed = True
+                if song['album'] != metadata['album']:
+                    song['album'] = metadata['album']
+                    changed = True
+                if song['duration'] != metadata['duration']:
+                    song['duration'] = metadata['duration']
+                    changed = True
+
+                if changed:
+                    updated_count += 1
+                    print(f"✓ Aktualisiert: {song['title']} - {song['artist']}")
+            else:
+                errors.append(f"Datei nicht gefunden: {song['filename']}")
+
+        except Exception as e:
+            errors.append(f"Fehler bei {song['filename']}: {str(e)}")
+            print(f"✗ Fehler bei {song['filename']}: {e}")
+
+    # Speichere aktualisierte Datenbank
+    if updated_count > 0:
+        save_songs_db(playlist)
+
+    return jsonify({
+        'success': True,
+        'updated': updated_count,
+        'total': len(playlist),
+        'errors': errors
+    })
 
 @app.route('/share/<int:song_id>/preview.mp3')
 def share_song_preview(song_id):
