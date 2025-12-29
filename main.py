@@ -3117,7 +3117,7 @@ def scan_metadata():
 
 @app.route('/share/<int:song_id>')
 def share_song(song_id):
-    """Discord Rich Embed mit Bild und Beschreibung"""
+    """Discord Rich Embed für ALLE Song-IDs"""
     global playlist
     if playlist is None:
         playlist = load_songs_db()
@@ -3126,29 +3126,31 @@ def share_song(song_id):
     if not song:
         return "Song nicht gefunden", 404
 
+    # WICHTIG: Verwende die aktuelle song_id dynamisch
     share_url = f"{BASE_URL}/share/{song_id}"
     duration_str = f"{song['duration']//60}:{song['duration']%60:02d}"
-
+    
     # Escape für HTML
     title = song['title'].replace('"', '&quot;').replace("'", '&#39;')
     artist = song['artist'].replace('"', '&quot;').replace("'", '&#39;')
     album = song.get('album', '').replace('"', '&quot;').replace("'", '&#39;')
-
-    # Schöne Beschreibung mit Emojis und Links
-    description = f"""🎵 **{artist}**{' • ' + album if album else ''}
+    
+    # Discord-optimierte Beschreibung mit direkten Links
+    # Discord macht URLs automatisch zu klickbaren Links
+    description = f"""🎵 {artist}{' • ' + album if album else ''}
 ⏱️ {duration_str}
 
-🔊 [▶️ Hörprobe anhören]({share_url}/preview)
-🎧 [💿 Vollversion abspielen]({share_url}/play)"""
-
+🔊 Hörprobe: {share_url}/preview
+💿 Vollversion: {share_url}/play"""
+    
     html = f"""<!DOCTYPE html>
 <html lang="de" prefix="og: http://ogp.me/ns#">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
+    
     <title>{title} - {artist} | Planetify</title>
-
+    
     <!-- Discord Rich Embed -->
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Planetify">
@@ -3160,17 +3162,17 @@ def share_song(song_id):
     <meta property="og:image:type" content="image/jpeg">
     <meta property="og:image:width" content="512">
     <meta property="og:image:height" content="512">
-    <meta property="og:image:alt" content="{title} - Album Cover">
-
-    <!-- Theme Color für Discord -->
+    <meta property="og:image:alt" content="{title} - Cover">
+    
+    <!-- Theme Color für Discord (Orange) -->
     <meta name="theme-color" content="#ff6b00">
-
+    
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="{title}">
     <meta name="twitter:description" content="🎵 {artist} • {duration_str}">
     <meta name="twitter:image" content="{share_url}/cover.jpg">
-
+    
     <style>
         * {{margin:0;padding:0;box-sizing:border-box}}
         body {{
@@ -3302,15 +3304,15 @@ def share_song(song_id):
 <body>
     <div class="card">
         <img src="{share_url}/cover.jpg" alt="{title}" class="cover">
-
+        
         <div class="title">{title}</div>
         <div class="artist">🎵 {artist}</div>
         <div class="duration">⏱️ {duration_str}</div>
-
+        
         <div class="info">
-            🔊 Klicke auf die Buttons unten für Audio
+            🔊 Klicke auf die Buttons für Audio-Wiedergabe
         </div>
-
+        
         <div class="buttons">
             <a href="{share_url}/preview" class="btn btn-preview">
                 ▶️ 30-Sekunden Hörprobe
@@ -3322,21 +3324,23 @@ def share_song(song_id):
                 🏠 Zurück zu Planetify
             </a>
         </div>
-
+        
         <div class="logo">PLANETIFY</div>
     </div>
 </body>
 </html>"""
-
+    
     return html, 200, {
         'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'no-cache, no-store, must-revalidate'
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
     }
 
 
 @app.route('/share/<int:song_id>/preview')
 def share_preview_page(song_id):
-    """30-Sekunden Hörprobe mit Auto-Play"""
+    """30-Sekunden Hörprobe mit Auto-Play - funktioniert für alle IDs"""
     global playlist
     if playlist is None:
         playlist = load_songs_db()
@@ -3348,13 +3352,21 @@ def share_preview_page(song_id):
     share_url = f"{BASE_URL}/share/{song_id}"
     title = song['title'].replace('"', '&quot;')
     artist = song['artist'].replace('"', '&quot;')
-
+    
     return f"""<!DOCTYPE html>
 <html lang="de">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{title} - Hörprobe</title>
+    <title>{title} - Hörprobe | Planetify</title>
+    
+    <!-- Discord Preview -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="🔊 {title} - Hörprobe">
+    <meta property="og:description" content="🎵 {artist} • 30 Sekunden Preview">
+    <meta property="og:image" content="{share_url}/cover.jpg">
+    <meta name="theme-color" content="#ff6b00">
+    
     <style>
         * {{margin:0;padding:0;box-sizing:border-box}}
         body {{
@@ -3414,11 +3426,7 @@ def share_preview_page(song_id):
         }}
         audio {{
             width:100%;
-            margin-bottom:24px;
-            filter:sepia(20%) saturate(70%) grayscale(1) contrast(99%) invert(12%)
-        }}
-        audio::-webkit-media-controls-panel {{
-            background-color:#1a1a1a
+            margin-bottom:24px
         }}
         .btn {{
             display:inline-block;
@@ -3453,6 +3461,7 @@ def share_preview_page(song_id):
         <div class="label">🔊 30-Sekunden Hörprobe</div>
         <audio controls autoplay>
             <source src="{share_url}/preview.mp3" type="audio/mpeg">
+            Dein Browser unterstützt kein Audio.
         </audio>
         <a href="{share_url}/play" class="btn">💿 Vollversion</a><br>
         <a href="{share_url}" class="btn btn-secondary">← Zurück</a>
@@ -3461,10 +3470,130 @@ def share_preview_page(song_id):
 </html>"""
 
 
+@app.route('/share/<int:song_id>/play')
+def share_play_page(song_id):
+    """Vollversion - funktioniert für alle IDs"""
+    global playlist
+    if playlist is None:
+        playlist = load_songs_db()
+
+    song = next((s for s in playlist if s['id'] == song_id), None)
+    if not song:
+        return "Song nicht gefunden", 404
+
+    share_url = f"{BASE_URL}/share/{song_id}"
+    title = song['title'].replace('"', '&quot;')
+    artist = song['artist'].replace('"', '&quot;')
+    
+    return f"""<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title} - Vollversion | Planetify</title>
+    
+    <!-- Discord Preview -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="💿 {title} - Vollversion">
+    <meta property="og:description" content="🎵 {artist}">
+    <meta property="og:image" content="{share_url}/cover.jpg">
+    <meta name="theme-color" content="#ff6b00">
+    
+    <style>
+        * {{margin:0;padding:0;box-sizing:border-box}}
+        body {{
+            font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+            background:linear-gradient(135deg,#1a0f00 0%,#000 100%);
+            color:#fff;
+            min-height:100vh;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            padding:20px
+        }}
+        .player {{
+            background:linear-gradient(135deg,#1a1a1a 0%,#0d0d0d 100%);
+            border-radius:20px;
+            padding:40px;
+            max-width:450px;
+            width:100%;
+            box-shadow:0 20px 60px rgba(0,0,0,.8);
+            border:1px solid #333;
+            text-align:center
+        }}
+        .cover {{
+            width:250px;
+            height:250px;
+            border-radius:12px;
+            margin:0 auto 24px;
+            box-shadow:0 12px 40px rgba(255,107,0,.4);
+            object-fit:cover
+        }}
+        h2 {{
+            font-size:26px;
+            margin-bottom:8px;
+            background:linear-gradient(135deg,#fff 0%,#b3b3b3 100%);
+            -webkit-background-clip:text;
+            -webkit-text-fill-color:transparent
+        }}
+        .artist {{
+            font-size:18px;
+            color:#b3b3b3;
+            margin-bottom:24px
+        }}
+        .label {{
+            background:rgba(255,107,0,0.2);
+            border:1px solid rgba(255,107,0,0.4);
+            border-radius:8px;
+            padding:12px;
+            margin-bottom:20px;
+            font-size:14px;
+            color:#ff6b00;
+            font-weight:600
+        }}
+        audio {{
+            width:100%;
+            margin-bottom:24px
+        }}
+        .btn {{
+            display:inline-block;
+            padding:12px 32px;
+            background:transparent;
+            color:#fff;
+            text-decoration:none;
+            border-radius:24px;
+            font-weight:600;
+            transition:all 0.3s;
+            margin:8px;
+            border:1px solid #535353
+        }}
+        .btn:hover {{
+            border-color:#fff;
+            box-shadow:0 4px 16px rgba(255,255,255,.2)
+        }}
+    </style>
+</head>
+<body>
+    <div class="player">
+        <img src="{share_url}/cover.jpg" alt="{title}" class="cover">
+        <h2>{title}</h2>
+        <div class="artist">🎵 {artist}</div>
+        <div class="label">💿 Vollversion</div>
+        <audio controls autoplay>
+            <source src="/stream/{song['filename']}" type="audio/mpeg">
+            Dein Browser unterstützt kein Audio.
+        </audio>
+        <a href="{share_url}" class="btn">← Zurück zur Übersicht</a><br>
+        <a href="/" class="btn">🏠 Zu Planetify</a>
+    </div>
+</body>
+</html>"""
+
+
 # Cover und Preview Routes bleiben gleich wie vorher
 @app.route('/share/<int:song_id>/cover.jpg')
 def share_cover(song_id):
-    """Cover-Bild für Discord (512x512 JPG)"""
+    """Cover für ALLE Song-IDs"""
     global playlist
     if playlist is None:
         playlist = load_songs_db()
@@ -3488,16 +3617,16 @@ def share_cover(song_id):
                 if 'APIC' in str(tag):
                     pic = audio.tags[tag]
                     img = Image.open(io.BytesIO(pic.data))
-
+                    
                     if img.mode != 'RGB':
                         img = img.convert('RGB')
-
+                    
                     img = img.resize((512, 512), Image.Resampling.LANCZOS)
-
+                    
                     output = io.BytesIO()
                     img.save(output, format='JPEG', quality=95)
                     output.seek(0)
-
+                    
                     return Response(
                         output.getvalue(),
                         mimetype='image/jpeg',
@@ -3513,7 +3642,7 @@ def share_cover(song_id):
 
 @app.route('/share/<int:song_id>/preview.mp3')
 def share_preview_mp3(song_id):
-    """30-Sekunden Audio-Vorschau"""
+    """Preview MP3 für ALLE Song-IDs"""
     global playlist
     if playlist is None:
         playlist = load_songs_db()
@@ -3527,7 +3656,7 @@ def share_preview_mp3(song_id):
         return "Datei nicht gefunden", 404
 
     preview_path = os.path.join(app.config['UPLOAD_FOLDER'], f'.preview_{song["filename"]}')
-
+    
     if os.path.exists(preview_path):
         return send_from_directory(
             os.path.dirname(preview_path),
@@ -3555,12 +3684,12 @@ def share_preview_mp3(song_id):
 
         if result.returncode == 0 and os.path.exists(temp_path):
             shutil.copy2(temp_path, preview_path)
-
+            
             with open(temp_path, 'rb') as f:
                 data = f.read()
-
+            
             os.unlink(temp_path)
-
+            
             return Response(
                 data,
                 mimetype='audio/mpeg',
