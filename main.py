@@ -3174,6 +3174,58 @@ def share_song_preview(song_id):
         return send_from_directory(app.config['UPLOAD_FOLDER'], song['filename'],
                                  mimetype='audio/mpeg')
 
+@app.route('/share/<int:song_id>/cover.png')
+def share_song_cover_png(song_id):
+    """Gibt das Cover als PNG für Discord Embeds zurück"""
+    global playlist
+    if playlist is None:
+        playlist = load_songs_db()
+
+    song = next((s for s in playlist if s['id'] == song_id), None)
+    if not song:
+        return create_dynamic_cover("Song nicht gefunden", "Planetify", 512, 512)
+
+    try:
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], song['filename'])
+        if not os.path.exists(filepath):
+            return create_dynamic_cover(song['title'], song['artist'], 512, 512)
+
+        from mutagen.mp3 import MP3
+        from PIL import Image
+        import io
+
+        audio = MP3(filepath)
+
+        if audio.tags:
+            # Suche nach APIC-Tag (Album Cover)
+            for tag_name in audio.tags.keys():
+                if 'APIC' in str(tag_name):
+                    pic = audio.tags[tag_name]
+
+                    # Öffne das Bild mit PIL und konvertiere zu PNG
+                    img = Image.open(io.BytesIO(pic.data))
+
+                    # Konvertiere zu RGB wenn nötig
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+
+                    # Resize auf 512x512 für beste Discord Qualität
+                    img = img.resize((512, 512), Image.Resampling.LANCZOS)
+
+                    # Speichere als PNG
+                    output = io.BytesIO()
+                    img.save(output, format='PNG')
+                    output.seek(0)
+
+                    return Response(output.getvalue(), mimetype='image/png')
+
+        # Fallback: Erstelle ein dynamisches Cover
+        return create_dynamic_cover(song['title'], song['artist'], 512, 512)
+
+    except Exception as e:
+        print(f"Cover-Fehler für {song_id}: {e}")
+        return create_dynamic_cover(song['title'], song['artist'], 512, 512)
+
 @app.route('/share/<int:song_id>/cover')
 def share_song_cover(song_id):
     """Gibt das Cover für Discord Embeds zurück - optimiert für Discord"""
@@ -3284,12 +3336,12 @@ def create_dynamic_cover(title, artist, width=512, height=512):
         y_artist = height * 0.78  # 78% der Höhe
         draw.text((x, y_artist), artist_text, fill='white', font=small_font)
 
-        # Speichere als JPEG
+        # Speichere als PNG
         output = io.BytesIO()
-        img.save(output, format='JPEG', quality=90)
+        img.save(output, format='PNG')
         output.seek(0)
 
-        return Response(output.getvalue(), mimetype='image/jpeg')
+        return Response(output.getvalue(), mimetype='image/png')
 
     except ImportError:
         # Fallback ohne PIL
@@ -3297,6 +3349,88 @@ def create_dynamic_cover(title, artist, width=512, height=512):
     except Exception as e:
         print(f"Dynamic cover error: {e}")
         return send_from_directory('static', 'default_cover.png', mimetype='image/png')
+
+@app.route('/check_cover/<int:song_id>')
+def check_cover(song_id):
+    """Überprüft ob Cover verfügbar ist"""
+    global playlist
+    if playlist is None:
+        playlist = load_songs_db()
+
+    song = next((s for s in playlist if s['id'] == song_id), None)
+    if not song:
+        return "Song nicht gefunden", 404
+
+    share_url = f"{BASE_URL}/share/{song_id}"
+
+    return f"""
+    <h1>Cover Check für {song['title']}</h1>
+    <p>Song: {song['title']} - {song['artist']}</p>
+    <p>Share URL: {share_url}</p>
+
+    <h2>Cover PNG:</h2>
+    <img src="{share_url}/cover.png" style="max-width: 300px; border: 2px solid #ff6b00;">
+    <p>URL: {share_url}/cover.png</p>
+
+    <h2>Cover JPG (Fallback):</h2>
+    <img src="{share_url}/cover" style="max-width: 300px; border: 2px solid #00ff00;">
+    <p>URL: {share_url}/cover</p>
+
+    <h2>Preview MP3:</h2>
+    <audio controls style="width: 300px;">
+        <source src="{share_url}/preview.mp3" type="audio/mpeg">
+    </audio>
+    <p>URL: {share_url}/preview.mp3</p>
+    """, 200, {'Content-Type': 'text/html; charset=utf-8'}
+
+@app.route('/embed_test/<int:song_id>')
+def embed_test(song_id):
+    """Test-Seite um Discord Embed zu überprüfen"""
+    global playlist
+    if playlist is None:
+        playlist = load_songs_db()
+
+    song = next((s for s in playlist if s['id'] == song_id), None)
+    if not song:
+        return "Song nicht gefunden", 404
+
+    share_url = f"{BASE_URL}/share/{song_id}"
+
+    return f"""
+    <html>
+    <head>
+        <title>Discord Embed Test - {song['title']}</title>
+        <meta property="og:type" content="music.song">
+        <meta property="og:site_name" content="Planetify">
+        <meta property="og:title" content="{song['title']}">
+        <meta property="og:description" content="🎵 {song['artist']} • {song['duration']//60}:{song['duration']%60:02d}
+
+Hörprobe: {share_url}/preview.mp3
+
+Song hören: {share_url}">
+        <meta property="og:url" content="{share_url}">
+        <meta property="og:image" content="{share_url}/cover.png">
+        <meta property="og:image:width" content="512">
+        <meta property="og:image:height" content="512">
+        <meta property="og:image:type" content="image/png">
+        <meta property="og:audio" content="{share_url}/preview.mp3">
+        <meta property="og:audio:type" content="audio/mpeg">
+    </head>
+    <body>
+        <h1>Discord Embed Test</h1>
+        <p>Kopiere diesen Link in Discord: <strong>{share_url}</strong></p>
+        <p>Das sollte ein Embed mit Bild und Hörprobe-Link zeigen.</p>
+
+        <h2>Cover Bild:</h2>
+        <img src="{share_url}/cover.png" style="max-width: 300px;">
+
+        <h2>Hörprobe:</h2>
+        <audio controls>
+            <source src="{share_url}/preview.mp3" type="audio/mpeg">
+        </audio>
+    </body>
+    </html>
+    """, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
 @app.route('/share/<int:song_id>')
 def share_song(song_id):
@@ -3327,14 +3461,17 @@ def share_song(song_id):
     <meta property="og:type" content="music.song">
     <meta property="og:site_name" content="Planetify">
     <meta property="og:title" content="{song['title']}">
-    <meta property="og:description" content="🎵 {song['artist']}{f' • {song["album"]}' if song['album'] else ''} • {song['duration']//60}:{song['duration']%60:02d}
+    <meta property="og:description" content="🎵 {song['artist']} • {song['duration']//60}:{song['duration']%60:02d}
 
-▶️ [🎵 Hörprobe anhören]({share_url}/preview.mp3) • 🎧 Vollversion auf Planetify">
+Hörprobe: {share_url}/preview.mp3
+
+Song hören: {share_url}">
     <meta property="og:url" content="{share_url}">
-    <meta property="og:image" content="{share_url}/cover">
+    <meta property="og:image" content="{share_url}/cover.png?v=1">
     <meta property="og:image:width" content="512">
     <meta property="og:image:height" content="512">
-    <meta property="og:image:type" content="image/jpeg">
+    <meta property="og:image:type" content="image/png">
+    <meta property="og:image:alt" content="Album cover for {song['title']} by {song['artist']}">
 
     <!-- Audio preview direkt im Embed -->
     <meta property="og:audio" content="{share_url}/preview.mp3">
