@@ -2829,7 +2829,8 @@ def get_cover(filename):
     try:
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         if not os.path.exists(filepath):
-            return jsonify({'error': 'Datei nicht gefunden'}), 404
+            # Erstelle ein dynamisches Cover für nicht gefundene Dateien
+            return create_dynamic_cover("Cover nicht gefunden", "Planetify", 200, 200)
 
         from mutagen.mp3 import MP3
         audio = MP3(filepath)
@@ -2841,12 +2842,14 @@ def get_cover(filename):
                     pic = audio.tags[tag_name]
                     return Response(pic.data, mimetype=f'image/{pic.mime.split("/")[1]}')
 
-        # Fallback: Standard-Cover zurückgeben
-        return send_from_directory('static', 'default_cover.png', mimetype='image/png')
+        # Fallback: Erstelle ein dynamisches Cover basierend auf dem Dateinamen
+        song_title = filename.replace('.mp3', '').replace('_', ' ')
+        return create_dynamic_cover(song_title, "Planetify", 200, 200)
 
     except Exception as e:
         print(f"Cover-Fehler für {filename}: {e}")
-        return send_from_directory('static', 'default_cover.png', mimetype='image/png')
+        # Bei Fehlern immer ein Cover zurückgeben
+        return create_dynamic_cover("Fehler", "Planetify", 200, 200)
 
 @app.route('/upload', methods=['POST'])
 def upload_files():
@@ -3180,13 +3183,12 @@ def share_song_cover(song_id):
 
     song = next((s for s in playlist if s['id'] == song_id), None)
     if not song:
-        # Erstelle ein dynamisches Cover für diesen Song
-        return create_dynamic_cover(song['title'], song['artist'])
+        return create_dynamic_cover("Song nicht gefunden", "Planetify", 512, 512)
 
     try:
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], song['filename'])
         if not os.path.exists(filepath):
-            return create_dynamic_cover(song['title'], song['artist'])
+            return create_dynamic_cover(song['title'], song['artist'], 512, 512)
 
         from mutagen.mp3 import MP3
         from PIL import Image, ImageDraw, ImageFont
@@ -3218,28 +3220,28 @@ def share_song_cover(song_id):
                     return Response(output.getvalue(), mimetype='image/jpeg')
 
         # Fallback: Erstelle ein dynamisches Cover
-        return create_dynamic_cover(song['title'], song['artist'])
+        return create_dynamic_cover(song['title'], song['artist'], 512, 512)
 
     except Exception as e:
         print(f"Cover-Fehler für {song_id}: {e}")
-        return create_dynamic_cover(song['title'], song['artist'])
+        return create_dynamic_cover(song['title'], song['artist'], 512, 512)
 
-def create_dynamic_cover(title, artist):
+def create_dynamic_cover(title, artist, width=512, height=512):
     """Erstellt ein dynamisches Cover für Songs ohne Cover"""
     try:
         from PIL import Image, ImageDraw, ImageFont
         import io
 
-        # Erstelle ein 512x512 Bild
-        img = Image.new('RGB', (512, 512), color='#ff6b00')
+        # Erstelle ein Bild mit angegebener Größe
+        img = Image.new('RGB', (width, height), color='#ff6b00')
         draw = ImageDraw.Draw(img)
 
         # Erstelle einen Gradient-Hintergrund
-        for y in range(512):
-            r = int(255 - (y / 512) * 100)
-            g = int(107 - (y / 512) * 50)
-            b = int(0 + (y / 512) * 100)
-            for x in range(512):
+        for y in range(height):
+            r = int(255 - (y / height) * 100)
+            g = int(107 - (y / height) * 50)
+            b = int(0 + (y / height) * 100)
+            for x in range(width):
                 draw.point((x, y), fill=(r, g, b))
 
         # Zeichne einen Musik-Emoji in die Mitte
@@ -3255,8 +3257,8 @@ def create_dynamic_cover(title, artist):
         bbox = draw.textbbox((0, 0), emoji, font=font)
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
-        x = (512 - text_width) // 2
-        y = (512 - text_height) // 2 - 50
+        x = (width - text_width) // 2
+        y = (height - text_height) // 2 - height * 0.1  # 10% über der Mitte
 
         draw.text((x, y), emoji, fill='white', font=font)
 
@@ -3270,15 +3272,17 @@ def create_dynamic_cover(title, artist):
         title_text = title[:20] + "..." if len(title) > 20 else title
         bbox = draw.textbbox((0, 0), title_text, font=small_font)
         text_width = bbox[2] - bbox[0]
-        x = (512 - text_width) // 2
-        draw.text((x, 350), title_text, fill='white', font=small_font)
+        x = (width - text_width) // 2
+        y_title = height * 0.68  # 68% der Höhe
+        draw.text((x, y_title), title_text, fill='white', font=small_font)
 
         # Artist
         artist_text = artist[:25] + "..." if len(artist) > 25 else artist
         bbox = draw.textbbox((0, 0), artist_text, font=small_font)
         text_width = bbox[2] - bbox[0]
-        x = (512 - text_width) // 2
-        draw.text((x, 400), artist_text, fill='white', font=small_font)
+        x = (width - text_width) // 2
+        y_artist = height * 0.78  # 78% der Höhe
+        draw.text((x, y_artist), artist_text, fill='white', font=small_font)
 
         # Speichere als JPEG
         output = io.BytesIO()
@@ -3296,7 +3300,7 @@ def create_dynamic_cover(title, artist):
 
 @app.route('/share/<int:song_id>')
 def share_song(song_id):
-    """Gibt Open Graph Metadaten für Discord Embeds zurück"""
+    """Gibt eine automatische Player-Seite für den Song zurück"""
     global playlist
     if playlist is None:
         playlist = load_songs_db()
@@ -3308,11 +3312,12 @@ def share_song(song_id):
     # Erstelle die Share-URL
     share_url = f"{BASE_URL}/share/{song_id}"
 
-    # Minimal HTML mit Open Graph Metadaten für Discord
+    # HTML-Seite mit Open Graph Metadaten und automatischer Wiedergabe
     share_html = f"""<!DOCTYPE html>
 <html lang="de">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{song['title']} - {song['artist']} | Planetify</title>
 
     <!-- Discord Embed Metadaten -->
@@ -3322,15 +3327,18 @@ def share_song(song_id):
     <meta property="og:type" content="music.song">
     <meta property="og:site_name" content="Planetify">
     <meta property="og:title" content="{song['title']}">
-    <meta property="og:description" content="🎵 {song['artist']}{f' • {song["album"]}' if song['album'] else ''} • {song['duration']//60}:{song['duration']%60:02d} • Hörprobe verfügbar">
+    <meta property="og:description" content="🎵 {song['artist']}{f' • {song["album"]}' if song['album'] else ''} • {song['duration']//60}:{song['duration']%60:02d}
+
+▶️ [🎵 Hörprobe anhören]({share_url}/preview.mp3) • 🎧 Vollversion auf Planetify">
     <meta property="og:url" content="{share_url}">
     <meta property="og:image" content="{share_url}/cover">
     <meta property="og:image:width" content="512">
     <meta property="og:image:height" content="512">
     <meta property="og:image:type" content="image/jpeg">
 
-    <!-- Audio preview -->
+    <!-- Audio preview direkt im Embed -->
     <meta property="og:audio" content="{share_url}/preview.mp3">
+    <meta property="og:audio:secure_url" content="{share_url}/preview.mp3">
     <meta property="og:audio:type" content="audio/mpeg">
 
     <!-- Music tags -->
@@ -3341,13 +3349,187 @@ def share_song(song_id):
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="{song['title']}">
-    <meta name="twitter:description" content="🎵 {song['artist']} • Hörprobe verfügbar">
+    <meta name="twitter:description" content="🎵 {song['artist']} • Hörprobe verfügbar • Vollversion auf Planetify">
     <meta name="twitter:image" content="{share_url}/cover">
 
-    <style>body{{display:none}}</style>
+    <!-- Theme color orange -->
+    <meta name="theme-color" content="#ff6b00">
+    <meta name="color-scheme" content="dark">
+
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: radial-gradient(ellipse at top, #1a0f00 0%, #000 50%);
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }}
+
+        .player-container {{
+            background: linear-gradient(135deg, rgba(255, 107, 0, 0.1), rgba(255, 61, 0, 0.05));
+            border: 1px solid rgba(255, 107, 0, 0.3);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(255, 107, 0, 0.2);
+        }}
+
+        .logo {{
+            font-size: 32px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #ff6b00 0%, #ff3d00 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 30px;
+        }}
+
+        .song-cover {{
+            width: 250px;
+            height: 250px;
+            border-radius: 16px;
+            margin: 0 auto 24px;
+            box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+            border: 2px solid rgba(255, 107, 0, 0.3);
+            object-fit: cover;
+            background: linear-gradient(135deg, #ff6b00, #ff3d00);
+            animation: pulse 2s infinite;
+        }}
+
+        @keyframes pulse {{
+            0%, 100% {{ opacity: 1; transform: scale(1); }}
+            50% {{ opacity: 0.8; transform: scale(0.98); }}
+        }}
+
+        .song-title {{
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #fff 0%, #b3b3b3 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }}
+
+        .song-artist {{
+            font-size: 18px;
+            color: #b3b3b3;
+            margin-bottom: 16px;
+        }}
+
+        .loading {{
+            font-size: 16px;
+            color: #ff6b00;
+            margin: 20px 0;
+            animation: blink 1s infinite;
+        }}
+
+        @keyframes blink {{
+            0%, 50% {{ opacity: 1; }}
+            51%, 100% {{ opacity: 0.5; }}
+        }}
+
+        .controls {{
+            margin-top: 30px;
+        }}
+
+        .control-btn {{
+            background: linear-gradient(135deg, #ff6b00 0%, #ff3d00 100%);
+            color: #fff;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 24px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            margin: 8px;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+            box-shadow: 0 4px 16px rgba(255, 107, 0, 0.3);
+        }}
+
+        .control-btn:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(255, 107, 0, 0.5);
+        }}
+
+        .secondary-btn {{
+            background: linear-gradient(135deg, #5865F2 0%, #4752C4 100%);
+            box-shadow: 0 4px 16px rgba(88, 101, 242, 0.3);
+        }}
+
+        .secondary-btn:hover {{
+            box-shadow: 0 8px 24px rgba(88, 101, 242, 0.5);
+        }}
+    </style>
 </head>
 <body>
-    <!-- Discord lädt nur die Metadaten, keine sichtbare Seite -->
+    <div class="player-container">
+        <div class="logo">PLANETIFY</div>
+
+        <img src="{share_url}/cover" alt="{song['title']}" class="song-cover"
+             onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 250 250%22%3E%3Crect fill=%22%23ff6b00%22 width=%22250%22 height=%22250%22 rx=%2216%22/%3E%3Ctext x=%22125%22 y=%22125%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22white%22 font-size=%2280%22%3E🎵%3C/text%3E%3C/svg%3E'">
+
+        <h1 class="song-title">{song['title']}</h1>
+        <div class="song-artist">von {song['artist']}</div>
+
+        <div class="loading">🎵 Song wird geladen...</div>
+
+        <audio id="songPlayer" autoplay preload="metadata">
+            <source src="/stream/{song['filename']}" type="audio/mpeg">
+            Dein Browser unterstützt kein Audio.
+        </audio>
+
+        <div class="controls">
+            <a href="/" class="control-btn">🎧 Mehr Songs auf Planetify</a>
+            <button class="control-btn secondary-btn" onclick="window.open('{share_url}/preview.mp3', '_blank')">🎵 Nur Hörprobe anhören</button>
+        </div>
+    </div>
+
+    <script>
+        const audio = document.getElementById('songPlayer');
+        const loading = document.querySelector('.loading');
+
+        // Automatische Wiedergabe
+        audio.addEventListener('canplay', () => {{
+            loading.textContent = '▶️ Song wird abgespielt...';
+            audio.play().catch(e => {{
+                console.log('Autoplay failed:', e);
+                loading.textContent = '⚠️ Klicke auf Play um zu hören';
+                // Fallback: Zeige Play-Button
+                const playBtn = document.createElement('button');
+                playBtn.className = 'control-btn';
+                playBtn.innerHTML = '▶️ Play';
+                playBtn.onclick = () => {{
+                    audio.play();
+                    loading.textContent = '▶️ Song wird abgespielt...';
+                    playBtn.remove();
+                }};
+                document.querySelector('.controls').prepend(playBtn);
+            }});
+        }});
+
+        audio.addEventListener('play', () => {{
+            loading.textContent = '▶️ Song wird abgespielt...';
+        }});
+
+        audio.addEventListener('ended', () => {{
+            loading.textContent = '✅ Song beendet - Entdecke mehr auf Planetify!';
+        }});
+
+        // Discord Metadaten werden automatisch geladen
+    </script>
 </body>
 </html>"""
 
